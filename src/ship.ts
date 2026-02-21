@@ -38,6 +38,7 @@ export class StateHistoryConnection extends EventEmitter {
     private deserializer: EOSJsDeserializer;
 
     private unconfirmed: number;
+    private reconnectDelay: number;
 
     constructor(params: IStateHistoryConnectionParams) {
         super();
@@ -55,6 +56,7 @@ export class StateHistoryConnection extends EventEmitter {
         this.connected = false;
         this.connecting = false;
         this.stopped = true;
+        this.reconnectDelay = 5000;
 
         this.blocksQueue = new PQueue({ concurrency: 1, autoStart: true });
 
@@ -85,11 +87,14 @@ export class StateHistoryConnection extends EventEmitter {
             return;
         }
 
+        const delay = this.reconnectDelay;
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60000);
+
         setTimeout(() => {
-            this.emit('info', 'Reconnecting to Ship...');
+            this.emit('info', `Reconnecting to Ship in ${delay / 1000}s...`);
 
             this.connect();
-        }, 5000);
+        }, delay);
     }
 
     send(request: [string, any]): void {
@@ -99,6 +104,7 @@ export class StateHistoryConnection extends EventEmitter {
     onConnect(): void {
         this.connected = true;
         this.connecting = false;
+        this.reconnectDelay = 5000;
     }
 
     getQueueSize(): number {
