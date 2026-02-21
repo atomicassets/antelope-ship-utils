@@ -1,20 +1,19 @@
-import { Serialize } from 'eosjs';
+import { ABI } from '@wharfkit/antelope';
 
 import { deserializeEosioType } from './serialization';
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
 import { IDeserializer } from '../types/ship';
 
 export class SingleThreadDeserializer implements IDeserializer {
     waiting: number = 0;
 
-    private readonly eosJSTypes: Map<string, Serialize.Type>;
+    private readonly shipAbi: ABI;
 
-    constructor(abi: Abi) {
-        this.eosJSTypes = Serialize.getTypesFromAbi(Serialize.createInitialTypes(), abi);
+    constructor(abi: any) {
+        this.shipAbi = ABI.from(abi);
     }
 
     deserialize(
-        param: Array<{ type: string; data: Uint8Array | string; abi?: Abi } | undefined>
+        param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>
     ): Promise<Array<{ success: boolean; data: unknown; message?: string }>> {
         const result = [];
 
@@ -25,16 +24,16 @@ export class SingleThreadDeserializer implements IDeserializer {
                 }
 
                 if (row.abi) {
-                    const abiTypes = Serialize.getTypesFromAbi(Serialize.createInitialTypes(), row.abi);
+                    const rowAbi = ABI.from(row.abi);
 
                     result.push({
                         success: true,
-                        data: deserializeEosioType(row.type, row.data, abiTypes, false),
+                        data: deserializeEosioType(row.type, row.data, rowAbi, false),
                     });
                 } else {
                     result.push({
                         success: true,
-                        data: deserializeEosioType(row.type, row.data, this.eosJSTypes),
+                        data: deserializeEosioType(row.type, row.data, this.shipAbi),
                     });
                 }
             } catch (error) {

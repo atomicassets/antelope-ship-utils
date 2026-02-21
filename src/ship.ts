@@ -1,6 +1,5 @@
 import PQueue from 'p-queue';
-import { Serialize } from 'eosjs';
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
+import { ABI } from '@wharfkit/antelope';
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 
@@ -25,8 +24,7 @@ export class StateHistoryConnection extends EventEmitter {
     private consumer: IShipConsumer;
     private requiredDeltas: string[];
 
-    private abi?: Abi;
-    private types?: Map<string, Serialize.Type>;
+    private shipAbi?: ABI;
 
     private ws?: WebSocket;
 
@@ -98,7 +96,7 @@ export class StateHistoryConnection extends EventEmitter {
     }
 
     send(request: [string, any]): void {
-        this.ws.send(serializeEosioType('request', request, this.types));
+        this.ws.send(serializeEosioType('request', request, this.shipAbi));
     }
 
     onConnect(): void {
@@ -113,18 +111,18 @@ export class StateHistoryConnection extends EventEmitter {
 
     async onMessage(data: any): Promise<void> {
         try {
-            if (!this.abi) {
+            if (!this.shipAbi) {
                 this.emit('info', 'Receiving ABI from ship...');
-                this.abi = JSON.parse(data);
-                this.types = Serialize.getTypesFromAbi(Serialize.createInitialTypes(), this.abi);
+                const abiJson = JSON.parse(data);
+                this.shipAbi = ABI.from(abiJson);
 
-                await this.deserializer.init(this.abi);
+                await this.deserializer.init(abiJson);
 
                 if (!this.stopped) {
                     this.requestBlocks();
                 }
             } else {
-                const [type, response] = deserializeEosioType('result', data, this.types);
+                const [type, response] = deserializeEosioType('result', data, this.shipAbi);
 
                 if (['get_blocks_result_v0', 'get_blocks_result_v1'].includes(type)) {
                     const respConfig: { [key: string]: { version: number } } = {
@@ -353,8 +351,7 @@ export class StateHistoryConnection extends EventEmitter {
             this.ws = null;
         }
 
-        this.abi = null;
-        this.types = null;
+        this.shipAbi = null;
         this.connected = false;
         this.connecting = false;
 
@@ -392,7 +389,7 @@ export class StateHistoryConnection extends EventEmitter {
         this.consumer = consumer;
         this.stopped = false;
 
-        if (this.connected && this.abi) {
+        if (this.connected && this.shipAbi) {
             this.requestBlocks();
         }
 

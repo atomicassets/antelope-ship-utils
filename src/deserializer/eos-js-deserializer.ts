@@ -1,5 +1,3 @@
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
-
 import { IDeserializer } from '../types/ship';
 import { ParallelDeserializer } from './parallel-deserializer';
 import { SingleThreadDeserializer } from './singlethread-deserializer';
@@ -15,7 +13,7 @@ export class EOSJsDeserializer implements IDeserializer {
 
     constructor(private readonly params: IDeserializerParams) {}
 
-    init(abi: Abi): Promise<void> {
+    init(abi: any): Promise<void> {
         if (this.params.threads && this.params.threads > 0) {
             this.strategyDeserializer = new ParallelDeserializer(abi, this.params.threads);
         } else {
@@ -25,7 +23,7 @@ export class EOSJsDeserializer implements IDeserializer {
     }
 
     deserialize(
-        param: Array<{ type: string; data: Uint8Array | string; abi?: Abi } | undefined>
+        param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>
     ): Promise<Array<{ success: boolean; data: unknown; message?: string }>> {
         this.waiting += 1;
 

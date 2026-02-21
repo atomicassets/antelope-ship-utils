@@ -1,10 +1,9 @@
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
+import { ABI, APIClient, FetchProvider } from '@wharfkit/antelope';
 
 import { IAbiProvider } from '../types/interfaces';
-import { JsonRpc } from 'eosjs';
 
 interface IAbiHistory {
-    abi: Abi;
+    abi: ABI;
     account: string;
     block_num: number;
 }
@@ -15,16 +14,18 @@ interface ILocalAbiProviderParams {
 }
 
 export class LocalAbiProvider implements IAbiProvider {
-    private rpc: JsonRpc;
+    private client: APIClient;
     private savedAbis: IAbiHistory[] = [];
 
     constructor(private readonly params: ILocalAbiProviderParams) {
-        this.rpc = new JsonRpc(params.rpcEndpoint, { fetch: params.fetchApi });
+        this.client = new APIClient(
+            new FetchProvider(params.rpcEndpoint, { fetch: params.fetchApi })
+        );
     }
 
     async init(): Promise<void> {}
 
-    async getAbi(contract: string, blockNum: number): Promise<Abi> {
+    async getAbi(contract: string, blockNum: number): Promise<ABI> {
         const firstTry = this.savedAbis.find((row) => row.account === contract && blockNum >= row.block_num);
 
         if (firstTry) {
@@ -37,21 +38,22 @@ export class LocalAbiProvider implements IAbiProvider {
             return secondTry.abi;
         }
 
-        const info = await this.rpc.get_info();
-        const result = await this.rpc.get_abi(contract);
+        const info = await this.client.v1.chain.get_info();
+        const result = await this.client.v1.chain.get_abi(contract);
 
         if (!result.abi) {
-            await this.setAbi(contract, info.head_block_num, undefined);
+            await this.setAbi(contract, Number(info.head_block_num), undefined);
 
             throw new Error(`No Abi found for ${contract}`);
         }
 
-        await this.setAbi(contract, info.head_block_num, result.abi);
+        const abi = ABI.from(result.abi);
+        await this.setAbi(contract, Number(info.head_block_num), abi);
 
-        return result.abi;
+        return abi;
     }
 
-    async setAbi(contract: string, blockNum: number, abi: Abi): Promise<void> {
+    async setAbi(contract: string, blockNum: number, abi: ABI): Promise<void> {
         this.savedAbis.unshift({
             account: contract,
             block_num: blockNum,

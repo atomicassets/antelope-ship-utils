@@ -1,5 +1,4 @@
-import { Serialize } from 'eosjs';
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
+import { ABI, Serializer } from '@wharfkit/antelope';
 
 import {
     IExtractedShipDelta,
@@ -9,7 +8,6 @@ import {
     ShipTransactionTrace,
 } from '../types/ship';
 import { EosioActionTrace, EosioTransaction } from '../types/leap';
-import { createAbiTypes, getTypesFromAbi, SerialBuffer, supportedAbiVersion } from 'eosjs/dist/eosjs-serialize';
 
 export function convertEosioTimestampToDate(timestamp: string): Date {
     return new Date(timestamp + '+0000');
@@ -18,40 +16,25 @@ export function convertEosioTimestampToDate(timestamp: string): Date {
 export function deserializeEosioType(
     type: string,
     data: Uint8Array | string,
-    types: Map<string, Serialize.Type>,
-    checkLength: boolean = true
+    abi: ABI,
+    _checkLength: boolean = true
 ): any {
-    let dataArray;
+    let dataArray: Uint8Array;
     if (typeof data === 'string') {
         dataArray = Uint8Array.from(Buffer.from(data, 'hex'));
     } else {
         dataArray = data;
     }
 
-    const buffer = new Serialize.SerialBuffer({
-        textEncoder: new TextEncoder(),
-        textDecoder: new TextDecoder(),
-        array: dataArray,
-    });
+    const result = Serializer.decode({ data: dataArray, type, abi });
 
-    const result = Serialize.getType(types, type).deserialize(
-        buffer,
-        new Serialize.SerializerState({ bytesAsUint8Array: true })
-    );
-
-    if (buffer.readPos !== data.length && checkLength) {
-        throw new Error('Deserialization error: ' + type);
-    }
-
-    return result;
+    return Serializer.objectify(result);
 }
 
-export function serializeEosioType(type: string, value: any, types: Map<string, Serialize.Type>): Uint8Array {
-    const buffer = new Serialize.SerialBuffer({ textEncoder: new TextEncoder(), textDecoder: new TextDecoder() });
+export function serializeEosioType(type: string, value: any, abi: ABI): Uint8Array {
+    const encoded = Serializer.encode({ object: value, type, abi });
 
-    Serialize.getType(types, type).serialize(buffer, value);
-
-    return buffer.asUint8Array();
+    return encoded.array;
 }
 
 export function extractShipTraces({
@@ -151,37 +134,26 @@ export function extractShipDeltas({
     return result;
 }
 
-export function getTableAbiType(abi: Abi, contract: string, table: string): string {
+export function getTableAbiType(abi: ABI, contract: string, table: string): string {
     for (const row of abi.tables) {
-        if (row.name === table) {
-            return row.type;
+        if (row.name == table) {
+            return String(row.type);
         }
     }
 
     throw new Error(`Type for table not found ${contract}:${table}`);
 }
 
-export function getActionAbiType(abi: Abi, contract: string, action: string): string {
+export function getActionAbiType(abi: ABI, contract: string, action: string): string {
     for (const row of abi.actions) {
-        if (row.name === action) {
-            return row.type;
+        if (row.name == action) {
+            return String(row.type);
         }
     }
 
     throw new Error(`Type for action not found ${contract}:${action}`);
 }
 
-export function deserializeAbi(serializedAbi: Uint8Array): Abi {
-    const buffer = new SerialBuffer({
-        textEncoder: new TextEncoder(),
-        textDecoder: new TextDecoder(),
-        array: serializedAbi,
-    });
-
-    if (!supportedAbiVersion(buffer.getString())) {
-        throw new Error('Unsupported abi version');
-    }
-    buffer.restartRead();
-    const abiTypes = getTypesFromAbi(createAbiTypes());
-    return abiTypes.get('abi_def').deserialize(buffer);
+export function deserializeAbi(serializedAbi: Uint8Array): ABI {
+    return Serializer.decode({ data: serializedAbi, type: ABI }) as ABI;
 }

@@ -14,13 +14,16 @@
     },
     "scripts": {
         "build": "tsc",
+        "check-types": "tsc --noEmit",
         "dev": "tsc --watch",
         "clean": "rm -rf dist",
-        "lint": "eslint 'src/**/*.ts'"
+        "lint": "eslint 'src/**/*.ts'",
+        "test": "mocha --require @swc-node/register 'src/**/*.test.ts'",
+        "test:coverage": "nyc mocha --require @swc-node/register 'src/**/*.test.ts'"
     },
     "dependencies": {
         "common-tags": "^1.8.2",
-        "eosjs": "^22.1.0",
+        "@wharfkit/antelope": "^1.1.1",
         "node-worker-threads-pool": "^1.5.1",
         "p-queue": "^6.6.2",
         "ws": "^8.13.0"

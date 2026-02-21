@@ -1,5 +1,4 @@
 import { EosioActionTrace, EosioContractRow, EosioTransaction } from './leap';
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
 
 export interface ITraceListenerPayload<T> {
     trace: EosioActionTrace<T>;
@@ -186,7 +185,7 @@ export type ShipContractRow<T = Uint8Array> = [
 export interface IDeserializer {
     waiting: number;
 
-    deserialize(param: Array<{ type: string; data: Uint8Array | string; abi?: Abi } | undefined>): Promise<
+    deserialize(param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>): Promise<
         Array<{
             success: boolean;
             data: unknown;

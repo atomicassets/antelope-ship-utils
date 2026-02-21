@@ -1,4 +1,4 @@
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
+import { ABI } from '@wharfkit/antelope';
 
 import {
     FullShipBlock,
@@ -11,9 +11,9 @@ import {
 export interface IAbiProvider {
     init(): Promise<any>;
 
-    getAbi(contract: string, blockNum: number): Promise<Abi>;
+    getAbi(contract: string, blockNum: number): Promise<ABI>;
 
-    setAbi(contract: string, blockNum: number, abi: Abi): Promise<void>;
+    setAbi(contract: string, blockNum: number, abi: ABI): Promise<void>;
 }
 
 export interface IShipConsumer {

@@ -1,8 +1,7 @@
 import { parentPort, workerData } from 'worker_threads';
 import { SingleThreadDeserializer } from './singlethread-deserializer';
-import { Abi } from 'eosjs/dist/eosjs-rpc-interfaces';
 
-const args: { abi: Abi } = workerData;
+const args: { abi: any } = workerData;
 
 const singleThreadDeserializer = new SingleThreadDeserializer(args.abi);
 
