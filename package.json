@@ -1,0 +1,36 @@
+{
+    "name": "@atomichub/eosio-ship-utils",
+    "version": "1.0.0",
+    "private": true,
+    "description": "EOSIO State History Plugin (SHIP) utilities",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "swc-node": "./src/index.ts",
+            "require": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "clean": "rm -rf dist",
+        "lint": "eslint 'src/**/*.ts'"
+    },
+    "dependencies": {
+        "common-tags": "^1.8.2",
+        "eosjs": "^22.1.0",
+        "node-worker-threads-pool": "^1.5.1",
+        "p-queue": "^6.6.2",
+        "ws": "^8.13.0"
+    },
+    "devDependencies": {
+        "@atomichub/eslint-config": "workspace:*",
+        "@atomichub/tsconfig": "workspace:*",
+        "@types/common-tags": "^1.8.4",
+        "@types/node": "^22",
+        "@types/ws": "^8.5.10",
+        "typescript": "^5.9.3"
+    }
+}
