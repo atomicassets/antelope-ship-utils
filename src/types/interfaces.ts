@@ -14,6 +14,8 @@ export interface IAbiProvider {
     getAbi(contract: string, blockNum: number): Promise<ABI>;
 
     setAbi(contract: string, blockNum: number, abi: ABI): Promise<void>;
+
+    getOlderAbis?(contract: string, blockNum: number): Promise<ABI[]>;
 }
 
 export interface IShipConsumer {

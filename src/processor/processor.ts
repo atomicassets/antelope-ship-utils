@@ -150,6 +150,36 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         ).then((t) => this.deserializer.deserialize(t));
 
         if (this.failOnDeserializationError) {
+            const failedIndices = deserializedDeltas
+                .map((row, i) => (!row.success ? i : -1))
+                .filter((i) => i >= 0);
+
+            if (failedIndices.length > 0 && this.abiProvider.getOlderAbis) {
+                for (const idx of failedIndices) {
+                    const dp = deltasToProcess[idx];
+                    const olderAbis = await this.abiProvider.getOlderAbis(
+                        dp.data.delta.code,
+                        block.this_block.block_num,
+                    );
+
+                    for (const olderAbi of olderAbis) {
+                        try {
+                            const type = getTableAbiType(olderAbi, dp.data.delta.code, dp.data.delta.table);
+                            const [result] = await this.deserializer.deserialize([
+                                { data: dp.data.delta.value, abi: olderAbi, type },
+                            ]);
+
+                            if (result.success) {
+                                deserializedDeltas[idx] = result;
+                                break;
+                            }
+                        } catch {
+                            // try next older ABI
+                        }
+                    }
+                }
+            }
+
             const errorDelta = deserializedDeltas.findIndex((row) => !row.success);
 
             if (errorDelta >= 0) {
@@ -238,6 +268,36 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         ).then((t) => this.deserializer.deserialize(t));
 
         if (this.failOnDeserializationError) {
+            const failedIndices = deserializedTraces
+                .map((row, i) => (!row.success ? i : -1))
+                .filter((i) => i >= 0);
+
+            if (failedIndices.length > 0 && this.abiProvider.getOlderAbis) {
+                for (const idx of failedIndices) {
+                    const tp = tracesToProcess[idx];
+                    const olderAbis = await this.abiProvider.getOlderAbis(
+                        tp.data.trace.act.account,
+                        block.this_block.block_num,
+                    );
+
+                    for (const olderAbi of olderAbis) {
+                        try {
+                            const type = getActionAbiType(olderAbi, tp.data.trace.act.account, tp.data.trace.act.name);
+                            const [result] = await this.deserializer.deserialize([
+                                { data: tp.data.trace.act.data, abi: olderAbi, type },
+                            ]);
+
+                            if (result.success) {
+                                deserializedTraces[idx] = result;
+                                break;
+                            }
+                        } catch {
+                            // try next older ABI
+                        }
+                    }
+                }
+            }
+
             const errorTrace = deserializedTraces.findIndex((row) => !row.success);
 
             if (errorTrace >= 0) {
