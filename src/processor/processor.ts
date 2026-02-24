@@ -380,8 +380,9 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                 try {
                     return this.abiProvider.setAbi(trace.data.account, block.block_num, deserializeAbi(trace.data.abi));
                 } catch (e) {
-                    if (this.failOnDeserializationError) throw e;
-                    this.emit('warn', `Error deserializing ABI ${trace.data.account}`, e);
+                    // Never crash on a malformed ABI — chains regularly publish garbage ABIs
+                    // that can't be deserialized. Log and skip; the account will use its previous ABI.
+                    this.emit('warn', `Error deserializing ABI ${trace.data.account} at block ${block.block_num}`, e);
                 }
             })
         );
