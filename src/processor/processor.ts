@@ -180,30 +180,50 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                 }
             }
 
-            const errorDelta = deserializedDeltas.findIndex((row) => !row.success);
+            const stillFailed = deserializedDeltas
+                .map((row, i) => (!row.success ? i : -1))
+                .filter((i) => i >= 0);
 
-            if (errorDelta >= 0) {
-                throw new Error(
-                    `Failed to deserialize deltas. ${JSON.stringify({
-                        message: deserializedDeltas[errorDelta].message,
-                        code: deltasToProcess[errorDelta].data.delta.code,
-                        delta: deltasToProcess[errorDelta].data.delta.table,
-                        data: deltasToProcess[errorDelta].data.delta.value,
-                    })}`
-                );
+            if (stillFailed.length > 0) {
+                if (this.abiProvider.getOlderAbis) {
+                    for (const idx of stillFailed) {
+                        this.emit(
+                            'warn',
+                            `Skipping undeserializable delta (all ABI versions exhausted): ${JSON.stringify({
+                                message: deserializedDeltas[idx].message,
+                                code: deltasToProcess[idx].data.delta.code,
+                                delta: deltasToProcess[idx].data.delta.table,
+                                block_num: block.this_block.block_num,
+                            })}`,
+                        );
+                    }
+                } else {
+                    throw new Error(
+                        `Failed to deserialize deltas. ${JSON.stringify({
+                            message: deserializedDeltas[stillFailed[0]].message,
+                            code: deltasToProcess[stillFailed[0]].data.delta.code,
+                            delta: deltasToProcess[stillFailed[0]].data.delta.table,
+                            data: deltasToProcess[stillFailed[0]].data.delta.value,
+                        })}`
+                    );
+                }
             }
         }
 
-        return deltasToProcess.map((dp, i) => ({
-            data: {
-                delta: {
-                    ...dp.data.delta,
-                    value: deserializedDeltas[i].data,
+        return deltasToProcess
+            .map((dp, i) => ({
+                data: {
+                    delta: {
+                        ...dp.data.delta,
+                        value: deserializedDeltas[i].data,
+                    },
+                    block,
                 },
-                block,
-            },
-            listeners: dp.listeners,
-        }));
+                listeners: dp.listeners,
+                _success: deserializedDeltas[i].success,
+            }))
+            .filter((entry) => entry._success)
+            .map(({ _success, ...entry }) => entry);
     }
 
     private findTraceProcessors(data: IExtractedShipTrace<Uint8Array>): ITraceListener[] {
@@ -298,42 +318,64 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                 }
             }
 
-            const errorTrace = deserializedTraces.findIndex((row) => !row.success);
+            const stillFailed = deserializedTraces
+                .map((row, i) => (!row.success ? i : -1))
+                .filter((i) => i >= 0);
 
-            if (errorTrace >= 0) {
-                throw new Error(
-                    `Failed to deserialize traces. ${JSON.stringify({
-                        message: deserializedTraces[errorTrace].message,
-                        account: tracesToProcess[errorTrace].data.trace.act.account,
-                        name: tracesToProcess[errorTrace].data.trace.act.name,
-                        data: tracesToProcess[errorTrace].data.trace.act.data,
-                    })}`
-                );
+            if (stillFailed.length > 0) {
+                if (this.abiProvider.getOlderAbis) {
+                    for (const idx of stillFailed) {
+                        this.emit(
+                            'warn',
+                            `Skipping undeserializable trace (all ABI versions exhausted): ${JSON.stringify({
+                                message: deserializedTraces[idx].message,
+                                account: tracesToProcess[idx].data.trace.act.account,
+                                name: tracesToProcess[idx].data.trace.act.name,
+                                block_num: block.this_block.block_num,
+                            })}`,
+                        );
+                    }
+                } else {
+                    throw new Error(
+                        `Failed to deserialize traces. ${JSON.stringify({
+                            message: deserializedTraces[stillFailed[0]].message,
+                            account: tracesToProcess[stillFailed[0]].data.trace.act.account,
+                            name: tracesToProcess[stillFailed[0]].data.trace.act.name,
+                            data: tracesToProcess[stillFailed[0]].data.trace.act.data,
+                        })}`
+                    );
+                }
             }
         }
 
-        return tracesToProcess.map((tp, i) => {
-            const txTrace = tp.data.tx.traces.find((trace) => trace.global_sequence === tp.data.trace.global_sequence);
+        return tracesToProcess
+            .map((tp, i) => {
+                if (!deserializedTraces[i].success) return null;
 
-            if (txTrace) {
-                txTrace.act.data = deserializedTraces[i].data as any;
-            }
+                const txTrace = tp.data.tx.traces.find(
+                    (trace) => trace.global_sequence === tp.data.trace.global_sequence,
+                );
 
-            return {
-                data: {
-                    trace: {
-                        ...tp.data.trace,
-                        act: {
-                            ...tp.data.trace.act,
-                            data: deserializedTraces[i].data,
+                if (txTrace) {
+                    txTrace.act.data = deserializedTraces[i].data as any;
+                }
+
+                return {
+                    data: {
+                        trace: {
+                            ...tp.data.trace,
+                            act: {
+                                ...tp.data.trace.act,
+                                data: deserializedTraces[i].data,
+                            },
                         },
+                        block,
+                        tx: tp.data.tx,
                     },
-                    block,
-                    tx: tp.data.tx,
-                },
-                listeners: tp.listeners,
-            };
-        });
+                    listeners: tp.listeners,
+                };
+            })
+            .filter((entry) => entry !== null);
     }
 
     addDeltaListener(listener: IDeltaListener): () => void {

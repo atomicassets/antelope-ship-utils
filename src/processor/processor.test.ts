@@ -214,30 +214,35 @@ describe('BlockProcessor ABI fallback', () => {
             expect((abiProvider.getOlderAbis as sinon.SinonStub).firstCall.args).to.deep.equal(['atomicassets', 8631733]);
         });
 
-        it('should throw when no older ABI works for deltas', async () => {
+        it('should warn and skip when no older ABI works for deltas (with getOlderAbis)', async () => {
             const abiProvider = createMockAbiProvider({ getOlderAbis: true, primaryAbi: newConfigAbi });
             // All calls fail
             const deserializer = createMockDeserializer({ failNonEmpty: 999 });
 
             (abiProvider.getOlderAbis as sinon.SinonStub).resolves([oldConfigAbi]);
 
+            const listenerStub = sinon.stub();
             const processor = new BlockProcessor({
                 deserializer,
                 abiProvider,
                 failOnDeserializationError: true,
-                deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: sinon.stub() }],
+                deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: listenerStub }],
             });
+
+            const warnings: string[] = [];
+            processor.on('warn', (msg: string) => warnings.push(msg));
 
             const block = createBlock(8631733);
             const delta = createDelta('atomicassets', 'config');
 
-            try {
-                await processor.processBlock({ block, traces: [], deltas: [delta] });
-                expect.fail('Should have thrown');
-            } catch (err: any) {
-                expect(err.message).to.include('Failed to deserialize deltas');
-                expect(err.message).to.include('Read past end of buffer');
-            }
+            // Should NOT throw — should warn and skip
+            await processor.processBlock({ block, traces: [], deltas: [delta] });
+
+            expect(warnings).to.have.length(1);
+            expect(warnings[0]).to.include('Skipping undeserializable delta');
+            expect(warnings[0]).to.include('atomicassets');
+            // Listener should NOT be called for the skipped delta
+            expect(listenerStub.called).to.be.false;
         });
 
         it('should not attempt fallback when getOlderAbis is not available', async () => {
@@ -306,11 +311,39 @@ describe('BlockProcessor ABI fallback', () => {
             expect((abiProvider.getOlderAbis as sinon.SinonStub).firstCall.args).to.deep.equal(['eosio.token', 8631733]);
         });
 
-        it('should throw when no older ABI works for traces', async () => {
+        it('should warn and skip when no older ABI works for traces (with getOlderAbis)', async () => {
             const abiProvider = createMockAbiProvider({ getOlderAbis: true, primaryAbi: newTransferAbi });
             const deserializer = createMockDeserializer({ failNonEmpty: 999, failMessage: 'Decoding error' });
 
             (abiProvider.getOlderAbis as sinon.SinonStub).resolves([oldTransferAbi]);
+
+            const listenerStub = sinon.stub();
+            const processor = new BlockProcessor({
+                deserializer,
+                abiProvider,
+                failOnDeserializationError: true,
+                traceListeners: [{ account: 'eosio.token', name: 'transfer', processor: listenerStub }],
+            });
+
+            const warnings: string[] = [];
+            processor.on('warn', (msg: string) => warnings.push(msg));
+
+            const block = createBlock(100);
+            const trace = createTrace('eosio.token', 'transfer');
+
+            // Should NOT throw — should warn and skip
+            await processor.processBlock({ block, traces: [trace], deltas: [] });
+
+            expect(warnings).to.have.length(1);
+            expect(warnings[0]).to.include('Skipping undeserializable trace');
+            expect(warnings[0]).to.include('eosio.token');
+            // Listener should NOT be called for the skipped trace
+            expect(listenerStub.called).to.be.false;
+        });
+
+        it('should still throw without getOlderAbis when trace deserialization fails', async () => {
+            const abiProvider = createMockAbiProvider({ getOlderAbis: false, primaryAbi: newTransferAbi });
+            const deserializer = createMockDeserializer({ failNonEmpty: 999, failMessage: 'Decoding error' });
 
             const processor = new BlockProcessor({
                 deserializer,
