@@ -85,15 +85,15 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         ]);
 
         for (let i = 0; i < tracesToProcess.length; i++) {
-            for (const listener of tracesToProcess[i].listeners) {
-                await listener.processor(tracesToProcess[i].data);
-            }
+            await Promise.all(
+                tracesToProcess[i].listeners.map((listener) => listener.processor(tracesToProcess[i].data))
+            );
         }
 
         for (let i = 0; i < deltasToProcess.length; i++) {
-            for (const listener of deltasToProcess[i].listeners) {
-                await listener.processor(deltasToProcess[i].data);
-            }
+            await Promise.all(
+                deltasToProcess[i].listeners.map((listener) => listener.processor(deltasToProcess[i].data))
+            );
         }
     }
 
@@ -119,11 +119,13 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             return toProcess;
         }, [] as { data: IExtractedShipDelta; listeners: IDeltaListener[] }[]);
 
-        const uniqueAccounts = [...new Set(deltas.map(t => t.delta.code))];
+        const uniqueAccounts = [...new Set(deltas.map((t) => t.delta.code))];
 
-        for (const account of uniqueAccounts) {
-            await this.abiProvider.getAbi(account, block.this_block.block_num).catch(() => null);
-        }
+        await Promise.all(
+            uniqueAccounts.map((account) =>
+                this.abiProvider.getAbi(account, block.this_block.block_num).catch(() => null)
+            )
+        );
 
         const deserializedDeltas = await Promise.all(
             deltasToProcess.map(async (d) => {
@@ -205,11 +207,13 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             return toProcess;
         }, [] as { data: IExtractedShipTrace; listeners: ITraceListener[] }[]);
 
-        const unqiueAccounts = [...new Set(tracesToProcess.map((t) => t.data.trace.act.account))];
+        const uniqueAccounts = [...new Set(tracesToProcess.map((t) => t.data.trace.act.account))];
 
-        for (const account of unqiueAccounts) {
-            await this.abiProvider.getAbi(account, block.this_block.block_num).catch(() => null);
-        }
+        await Promise.all(
+            uniqueAccounts.map((account) =>
+                this.abiProvider.getAbi(account, block.this_block.block_num).catch(() => null)
+            )
+        );
 
         const deserializedTraces = await Promise.all(
             tracesToProcess.map(async (t) => {
