@@ -92,16 +92,29 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
 
         const deserMs = Date.now() - deserStart;
         const listenerStart = Date.now();
+        const listenerTimings: Record<string, number> = {};
 
         for (let i = 0; i < tracesToProcess.length; i++) {
             await Promise.all(
-                tracesToProcess[i].listeners.map((listener) => listener.processor(tracesToProcess[i].data))
+                tracesToProcess[i].listeners.map(async (listener) => {
+                    const t0 = Date.now();
+                    await listener.processor(tracesToProcess[i].data);
+                    const elapsed = Date.now() - t0;
+                    const key = `trace:${listener.account}:${listener.name}`;
+                    listenerTimings[key] = (listenerTimings[key] || 0) + elapsed;
+                })
             );
         }
 
         for (let i = 0; i < deltasToProcess.length; i++) {
             await Promise.all(
-                deltasToProcess[i].listeners.map((listener) => listener.processor(deltasToProcess[i].data))
+                deltasToProcess[i].listeners.map(async (listener) => {
+                    const t0 = Date.now();
+                    await listener.processor(deltasToProcess[i].data);
+                    const elapsed = Date.now() - t0;
+                    const key = `delta:${listener.contract}:${listener.table}`;
+                    listenerTimings[key] = (listenerTimings[key] || 0) + elapsed;
+                })
             );
         }
 
@@ -115,6 +128,7 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                 abi_ms: abiMs,
                 deser_ms: deserMs,
                 listener_ms: listenerMs,
+                listener_breakdown: listenerTimings,
                 traces: tracesToProcess.length,
                 deltas: deltasToProcess.length,
             });
