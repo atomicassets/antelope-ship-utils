@@ -70,11 +70,17 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         traces: IExtractedShipTrace<Uint8Array>[];
         deltas: IExtractedShipDelta<Uint8Array>[];
     }): Promise<void> {
+        const blockStart = Date.now();
+
         await this.processABIUpdates({ block: block.this_block, traces });
+
+        const abiMs = Date.now() - blockStart;
 
         for (const p of this.blockListeners) {
             await p(block);
         }
+
+        const deserStart = Date.now();
 
         const [tracesToProcess, deltasToProcess] = await Promise.all([
             this.findAndDeserializeTraces({
@@ -83,6 +89,9 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             }),
             this.findAndDeserializeDeltas({ block, deltas }),
         ]);
+
+        const deserMs = Date.now() - deserStart;
+        const listenerStart = Date.now();
 
         for (let i = 0; i < tracesToProcess.length; i++) {
             await Promise.all(
@@ -94,6 +103,21 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             await Promise.all(
                 deltasToProcess[i].listeners.map((listener) => listener.processor(deltasToProcess[i].data))
             );
+        }
+
+        const listenerMs = Date.now() - listenerStart;
+        const totalMs = Date.now() - blockStart;
+
+        if (totalMs > 50) {
+            this.emit('timing', {
+                block_num: block.this_block.block_num,
+                total_ms: totalMs,
+                abi_ms: abiMs,
+                deser_ms: deserMs,
+                listener_ms: listenerMs,
+                traces: tracesToProcess.length,
+                deltas: deltasToProcess.length,
+            });
         }
     }
 
