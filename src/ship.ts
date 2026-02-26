@@ -163,7 +163,7 @@ export class StateHistoryConnection extends EventEmitter {
                                 );
                             }
                         } else if (this.shipOptions.fetch_block) {
-                            if (this.connectionOptions.allow_empty_blocks) {
+                            if (this.connectionOptions.allow_empty_blocks || response.this_block.block_num <= 1) {
                                 this.emit(
                                     'warning',
                                     `Block #${response.this_block.block_num} does not contain block data`
@@ -181,7 +181,7 @@ export class StateHistoryConnection extends EventEmitter {
                         if (response.traces) {
                             traces = this.deserialize('transaction_trace[]', response.traces);
                         } else if (this.shipOptions.fetch_traces) {
-                            if (this.connectionOptions.allow_empty_traces) {
+                            if (this.connectionOptions.allow_empty_traces || response.this_block.block_num <= 1) {
                                 this.emit(
                                     'warning',
                                     `Block #${response.this_block.block_num} does not contain trace data`
@@ -201,7 +201,7 @@ export class StateHistoryConnection extends EventEmitter {
                                 this.deserializeDeltas(res)
                             );
                         } else if (this.shipOptions.fetch_deltas) {
-                            if (this.connectionOptions.allow_empty_deltas) {
+                            if (this.connectionOptions.allow_empty_deltas || response.this_block.block_num <= 1) {
                                 this.emit(
                                     'warning',
                                     `Block #${response.this_block.block_num} does not contain delta data`
