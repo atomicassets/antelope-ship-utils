@@ -19,7 +19,7 @@
         "clean": "rm -rf dist",
         "lint": "eslint 'src/**/*.ts'",
         "test": "mocha --require @swc-node/register 'src/**/*.test.ts'",
-        "test:coverage": "nyc mocha --require @swc-node/register 'src/**/*.test.ts'"
+        "test:coverage": "c8 mocha --require @swc-node/register 'src/**/*.test.ts'"
     },
     "dependencies": {
         "common-tags": "^1.8.2",
