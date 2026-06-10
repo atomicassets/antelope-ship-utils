@@ -38,6 +38,9 @@ export class StateHistoryConnection extends EventEmitter {
     private unconfirmed: number;
     private reconnectDelay: number;
 
+    private lastActivityAt = 0;
+    private heartbeatTimer?: NodeJS.Timeout;
+
     constructor(params: IStateHistoryConnectionParams) {
         super();
         this.endpoint = params.endpoint;
@@ -46,6 +49,8 @@ export class StateHistoryConnection extends EventEmitter {
             allow_empty_deltas: false,
             allow_empty_traces: false,
             allow_empty_blocks: false,
+            heartbeat_interval_ms: 30 * 1000,
+            idle_timeout_ms: 300 * 1000,
             ...(params.connectionOptions || {}),
         };
 
@@ -72,11 +77,56 @@ export class StateHistoryConnection extends EventEmitter {
             });
 
             this.ws.on('open', () => this.onConnect());
-            this.ws.on('message', (data: any) => this.onMessage(data));
+            this.ws.on('message', (data: any) => {
+                this.lastActivityAt = Date.now();
+                this.onMessage(data);
+            });
+            this.ws.on('pong', () => {
+                this.lastActivityAt = Date.now();
+            });
             this.ws.on('close', () => this.onClose());
             this.ws.on('error', (e: Error) => {
                 this.emit('error', new ShipError('Websocket Error', e));
             });
+        }
+    }
+
+    private startHeartbeat(): void {
+        this.stopHeartbeat();
+
+        this.lastActivityAt = Date.now();
+        this.heartbeatTimer = setInterval(() => {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            if (Date.now() - this.lastActivityAt > this.connectionOptions.idle_timeout_ms) {
+                this.emit(
+                    'warning',
+                    oneLineTrim`No ship traffic for ${this.connectionOptions.idle_timeout_ms / 1000}s,
+                        terminating dead connection to force a reconnect`
+                );
+
+                // terminate() destroys the socket immediately and fires 'close',
+                // which routes through onClose() -> reconnect(). A graceful
+                // close() would wait for a close frame the dead peer never sends.
+                this.ws.terminate();
+
+                return;
+            }
+
+            try {
+                this.ws.ping();
+            } catch (e) {
+                this.emit('error', new ShipError('Websocket ping failed', e));
+            }
+        }, this.connectionOptions.heartbeat_interval_ms);
+    }
+
+    private stopHeartbeat(): void {
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = undefined;
         }
     }
 
@@ -103,6 +153,8 @@ export class StateHistoryConnection extends EventEmitter {
         this.connected = true;
         this.connecting = false;
         this.reconnectDelay = 5000;
+
+        this.startHeartbeat();
     }
 
     getQueueSize(): number {
@@ -346,6 +398,8 @@ export class StateHistoryConnection extends EventEmitter {
     async onClose(): Promise<void> {
         this.emit('error', new ShipError('Ship Websocket disconnected'));
 
+        this.stopHeartbeat();
+
         if (this.ws) {
             this.ws.terminate();
             this.ws = null;
@@ -400,6 +454,8 @@ export class StateHistoryConnection extends EventEmitter {
 
     stopProcessing(): void {
         this.stopped = true;
+
+        this.stopHeartbeat();
 
         this.consumer = undefined;
         this.requiredDeltas = [];
