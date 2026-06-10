@@ -44,6 +44,15 @@ export interface IShipConnectionOptions {
     allow_empty_traces?: boolean;
     allow_empty_deltas?: boolean;
     allow_empty_blocks?: boolean;
+    /** Interval between websocket pings while connected (ms). */
+    heartbeat_interval_ms?: number;
+    /**
+     * Terminate the socket when no message or pong arrives for this long (ms).
+     * A half-open TCP connection (peer gone without FIN, e.g. a load-balancer
+     * endpoint swap) never emits 'close', so without this the client hangs
+     * forever instead of reconnecting.
+     */
+    idle_timeout_ms?: number;
 }
 
 export interface IBlockRequest {
