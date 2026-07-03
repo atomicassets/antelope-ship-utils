@@ -29,7 +29,6 @@
         "ws": "^8.20.1"
     },
     "devDependencies": {
-        "@atomichub/eslint-config": "workspace:*",
         "@atomichub/tsconfig": "workspace:*",
         "@types/common-tags": "^1.8.4",
         "@types/node": "^22",
