@@ -54,14 +54,24 @@ describe('StateHistoryConnection heartbeat watchdog', () => {
 
     it('keeps a responsive connection alive past the idle timeout', async () => {
         // Default autoPong: the server answers pings, which counts as activity.
+        // Count the pings the server receives so the assertion proves the
+        // heartbeat is actively firing, independent of wall-clock timing.
         server = new WebSocketServer({ port: 0 });
+        let pingsSeen = 0;
+        server.on('connection', (ws) => ws.on('ping', () => (pingsSeen += 1)));
         const port = await listen(server);
 
+        // idle_timeout is deliberately far larger than heartbeat_interval and
+        // larger than any plausible CI event-loop stall: a full-suite CPU stall
+        // exceeding a tiny idle_timeout used to trip a spurious "dead connection"
+        // termination on this healthy peer (the flake). The window below still
+        // exceeds idle_timeout, so a heartbeat that failed to refresh activity
+        // would trip the watchdog and fail the test.
         connection = new StateHistoryConnection({
             endpoint: `ws://127.0.0.1:${port}`,
             connectionOptions: {
                 heartbeat_interval_ms: 25,
-                idle_timeout_ms: 100,
+                idle_timeout_ms: 1000,
             },
         });
 
@@ -73,9 +83,14 @@ describe('StateHistoryConnection heartbeat watchdog', () => {
         (connection as any).stopped = false;
         connection.connect();
 
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        // Run past the idle timeout so staying alive is attributable to the
+        // heartbeat refreshing activity, not to the window ending early.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
 
         expect(warnings.some((w) => w.includes('terminating dead connection'))).to.equal(false);
         expect((connection as any).connected).to.equal(true);
+        // The heartbeat fired repeatedly (25ms interval over a 1200ms window);
+        // require several to confirm it is running, tolerant of scheduling jitter.
+        expect(pingsSeen).to.be.greaterThanOrEqual(3);
     });
 });
