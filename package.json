@@ -33,6 +33,6 @@
         "@types/common-tags": "^1.8.4",
         "@types/node": "^22",
         "@types/ws": "^8.5.10",
-        "typescript": "^5.9.3"
+        "typescript": "^6.0.0"
     }
 }
