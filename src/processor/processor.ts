@@ -31,8 +31,8 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
     private readonly traceListeners: ITraceListener[];
     private readonly deltaListeners: IDeltaListener[];
     private readonly blockListeners: IBlockListener[];
-    private readonly preBlockHooks?: IBlockListener[];
-    private readonly postBlockHooks?: IBlockListener[];
+    private readonly preBlockHooks: IBlockListener[];
+    private readonly postBlockHooks: IBlockListener[];
     private readonly deserializer: IDeserializer;
     private readonly abiProvider: IAbiProvider;
     private readonly failOnDeserializationError: boolean;
@@ -94,11 +94,11 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         const listenerStart = Date.now();
         const listenerTimings: Record<string, number> = {};
 
-        for (let i = 0; i < tracesToProcess.length; i++) {
+        for (const trace of tracesToProcess) {
             await Promise.all(
-                tracesToProcess[i].listeners.map(async (listener) => {
+                trace.listeners.map(async (listener) => {
                     const t0 = Date.now();
-                    await listener.processor(tracesToProcess[i].data);
+                    await listener.processor(trace.data);
                     const elapsed = Date.now() - t0;
                     const key = `trace:${listener.account}:${listener.name}`;
                     listenerTimings[key] = (listenerTimings[key] || 0) + elapsed;
@@ -106,11 +106,11 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             );
         }
 
-        for (let i = 0; i < deltasToProcess.length; i++) {
+        for (const delta of deltasToProcess) {
             await Promise.all(
-                deltasToProcess[i].listeners.map(async (listener) => {
+                delta.listeners.map(async (listener) => {
                     const t0 = Date.now();
-                    await listener.processor(deltasToProcess[i].data);
+                    await listener.processor(delta.data);
                     const elapsed = Date.now() - t0;
                     const key = `delta:${listener.contract}:${listener.table}`;
                     listenerTimings[key] = (listenerTimings[key] || 0) + elapsed;
@@ -194,7 +194,10 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
 
             if (failedIndices.length > 0 && this.abiProvider.getOlderAbis) {
                 for (const idx of failedIndices) {
-                    const dp = deltasToProcess[idx];
+                    // idx is a valid index into deltasToProcess: deserializedDeltas was produced
+                    // by deserializing deltasToProcess 1:1 (every IDeserializer implementation
+                    // returns one result per input, in order), so both arrays share length/order.
+                    const dp = deltasToProcess[idx]!;
                     const olderAbis = await this.abiProvider.getOlderAbis(
                         dp.data.delta.code,
                         block.this_block.block_num,
@@ -206,6 +209,11 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                             const [result] = await this.deserializer.deserialize([
                                 { data: dp.data.delta.value, abi: olderAbi, type },
                             ]);
+
+                            // A single-element input always yields a single-element output.
+                            if (!result) {
+                                continue;
+                            }
 
                             if (result.success) {
                                 deserializedDeltas[idx] = result;
@@ -225,23 +233,31 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             if (stillFailed.length > 0) {
                 if (this.abiProvider.getOlderAbis) {
                     for (const idx of stillFailed) {
+                        // See the comment above: idx indexes both parallel arrays safely.
+                        const failedRow = deserializedDeltas[idx]!;
+                        const dp = deltasToProcess[idx]!;
                         this.emit(
                             'warn',
                             `Skipping undeserializable delta (all ABI versions exhausted): ${JSON.stringify({
-                                message: deserializedDeltas[idx].message,
-                                code: deltasToProcess[idx].data.delta.code,
-                                delta: deltasToProcess[idx].data.delta.table,
+                                message: failedRow.message,
+                                code: dp.data.delta.code,
+                                delta: dp.data.delta.table,
                                 block_num: block.this_block.block_num,
                             })}`,
                         );
                     }
                 } else {
+                    // stillFailed.length > 0 was just checked, so index 0 exists, and it
+                    // indexes both parallel arrays safely (see the comment above).
+                    const idx = stillFailed[0]!;
+                    const failedRow = deserializedDeltas[idx]!;
+                    const dp = deltasToProcess[idx]!;
                     throw new Error(
                         `Failed to deserialize deltas. ${JSON.stringify({
-                            message: deserializedDeltas[stillFailed[0]].message,
-                            code: deltasToProcess[stillFailed[0]].data.delta.code,
-                            delta: deltasToProcess[stillFailed[0]].data.delta.table,
-                            data: deltasToProcess[stillFailed[0]].data.delta.value,
+                            message: failedRow.message,
+                            code: dp.data.delta.code,
+                            delta: dp.data.delta.table,
+                            data: dp.data.delta.value,
                         })}`
                     );
                 }
@@ -249,17 +265,23 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         }
 
         return deltasToProcess
-            .map((dp, i) => ({
-                data: {
-                    delta: {
-                        ...dp.data.delta,
-                        value: deserializedDeltas[i].data,
+            .map((dp, i) => {
+                // i indexes deltasToProcess; deserializedDeltas has the same length/order
+                // (see the comment above on the deserializer's 1:1 input/output contract).
+                const deserialized = deserializedDeltas[i]!;
+
+                return {
+                    data: {
+                        delta: {
+                            ...dp.data.delta,
+                            value: deserialized.data,
+                        },
+                        block,
                     },
-                    block,
-                },
-                listeners: dp.listeners,
-                _success: deserializedDeltas[i].success,
-            }))
+                    listeners: dp.listeners,
+                    _success: deserialized.success,
+                };
+            })
             .filter((entry) => entry._success)
             .map(({ _success, ...entry }) => entry);
     }
@@ -332,7 +354,10 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
 
             if (failedIndices.length > 0 && this.abiProvider.getOlderAbis) {
                 for (const idx of failedIndices) {
-                    const tp = tracesToProcess[idx];
+                    // idx is a valid index into tracesToProcess: deserializedTraces was produced
+                    // by deserializing tracesToProcess 1:1 (every IDeserializer implementation
+                    // returns one result per input, in order), so both arrays share length/order.
+                    const tp = tracesToProcess[idx]!;
                     const olderAbis = await this.abiProvider.getOlderAbis(
                         tp.data.trace.act.account,
                         block.this_block.block_num,
@@ -344,6 +369,11 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                             const [result] = await this.deserializer.deserialize([
                                 { data: tp.data.trace.act.data, abi: olderAbi, type },
                             ]);
+
+                            // A single-element input always yields a single-element output.
+                            if (!result) {
+                                continue;
+                            }
 
                             if (result.success) {
                                 deserializedTraces[idx] = result;
@@ -363,23 +393,31 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             if (stillFailed.length > 0) {
                 if (this.abiProvider.getOlderAbis) {
                     for (const idx of stillFailed) {
+                        // See the comment above: idx indexes both parallel arrays safely.
+                        const failedRow = deserializedTraces[idx]!;
+                        const tp = tracesToProcess[idx]!;
                         this.emit(
                             'warn',
                             `Skipping undeserializable trace (all ABI versions exhausted): ${JSON.stringify({
-                                message: deserializedTraces[idx].message,
-                                account: tracesToProcess[idx].data.trace.act.account,
-                                name: tracesToProcess[idx].data.trace.act.name,
+                                message: failedRow.message,
+                                account: tp.data.trace.act.account,
+                                name: tp.data.trace.act.name,
                                 block_num: block.this_block.block_num,
                             })}`,
                         );
                     }
                 } else {
+                    // stillFailed.length > 0 was just checked, so index 0 exists, and it
+                    // indexes both parallel arrays safely (see the comment above).
+                    const idx = stillFailed[0]!;
+                    const failedRow = deserializedTraces[idx]!;
+                    const tp = tracesToProcess[idx]!;
                     throw new Error(
                         `Failed to deserialize traces. ${JSON.stringify({
-                            message: deserializedTraces[stillFailed[0]].message,
-                            account: tracesToProcess[stillFailed[0]].data.trace.act.account,
-                            name: tracesToProcess[stillFailed[0]].data.trace.act.name,
-                            data: tracesToProcess[stillFailed[0]].data.trace.act.data,
+                            message: failedRow.message,
+                            account: tp.data.trace.act.account,
+                            name: tp.data.trace.act.name,
+                            data: tp.data.trace.act.data,
                         })}`
                     );
                 }
@@ -388,14 +426,18 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
 
         return tracesToProcess
             .map((tp, i) => {
-                if (!deserializedTraces[i].success) return null;
+                // i indexes tracesToProcess; deserializedTraces has the same length/order
+                // (see the comment above on the deserializer's 1:1 input/output contract).
+                const deserialized = deserializedTraces[i]!;
+
+                if (!deserialized.success) return null;
 
                 const txTrace = tp.data.tx.traces.find(
                     (trace) => trace.global_sequence === tp.data.trace.global_sequence,
                 );
 
                 if (txTrace) {
-                    txTrace.act.data = deserializedTraces[i].data as any;
+                    txTrace.act.data = deserialized.data as any;
                 }
 
                 return {
@@ -404,7 +446,7 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                             ...tp.data.trace,
                             act: {
                                 ...tp.data.trace.act,
-                                data: deserializedTraces[i].data,
+                                data: deserialized.data,
                             },
                         },
                         block,
@@ -498,17 +540,24 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         );
 
         const neededAbis = deserializedAbiTraces.filter(
-            (deserializedTrace: { success: boolean; data: { account: string; abi: Uint8Array } }) => {
-                if (!deserializedTrace.success) {
+            (
+                deserializedTrace
+            ): deserializedTrace is { success: boolean; data: { account: string; abi: Uint8Array }; message?: string } => {
+                if (!deserializedTrace.success || !this.isSetAbiActionData(deserializedTrace.data)) {
                     return false;
                 }
 
-                const isEOSAbi = deserializedTrace.data.account === 'eosio';
+                // Bind to a const so the narrowed type survives across the closures below —
+                // TS does not retain narrowing of a parameter's property access inside nested
+                // function bodies.
+                const abiData = deserializedTrace.data;
+
+                const isEOSAbi = abiData.account === 'eosio';
                 const isRequiredInDeltas = this.deltaListeners.some(
-                    (dl) => dl.contract === '*' || dl.contract === deserializedTrace.data.account
+                    (dl) => dl.contract === '*' || dl.contract === abiData.account
                 );
                 const isRequiredInTraces = this.traceListeners.some(
-                    (tl) => tl.account === '*' || tl.account === deserializedTrace.data.account
+                    (tl) => tl.account === '*' || tl.account === abiData.account
                 );
 
                 return isEOSAbi || isRequiredInDeltas || isRequiredInTraces;
@@ -516,7 +565,7 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         );
 
         await Promise.all(
-            neededAbis.map(async (trace: { success: boolean; data: { account: string; abi: Uint8Array } }) => {
+            neededAbis.map(async (trace) => {
                 try {
                     return this.abiProvider.setAbi(trace.data.account, block.block_num, deserializeAbi(trace.data.abi));
                 } catch (e) {
@@ -525,6 +574,20 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                     this.emit('warn', `Error deserializing ABI ${trace.data.account} at block ${block.block_num}`, e);
                 }
             })
+        );
+    }
+
+    /**
+     * The `setabi` action's deserialized payload is typed as `unknown` by IDeserializer
+     * (deserialization can fail or return unrelated shapes for malformed ABIs), so narrow
+     * it here to the shape the eosio::setabi action schema actually produces.
+     */
+    private isSetAbiActionData(data: unknown): data is { account: string; abi: Uint8Array } {
+        return (
+            typeof data === 'object' &&
+            data !== null &&
+            typeof (data as Record<string, unknown>).account === 'string' &&
+            (data as Record<string, unknown>).abi instanceof Uint8Array
         );
     }
 }

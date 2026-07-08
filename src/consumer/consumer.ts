@@ -72,7 +72,9 @@ export class ShipConsumer implements IShipConsumer {
         this.delayedBlocks.push(resp);
 
         while (this.delayedBlocks.length > this.blockDelay) {
-            const nextBlock = this.delayedBlocks.shift();
+            // The length check above guarantees the array is non-empty, so shift()
+            // always returns a value here.
+            const nextBlock = this.delayedBlocks.shift()!;
 
             await this.processBlock(nextBlock);
         }
@@ -118,5 +120,6 @@ export class ShipConsumer implements IShipConsumer {
                 block: resp.block,
             });
         }
+        return [];
     }
 }

@@ -1,9 +1,10 @@
 {
-    "extends": "@atomichub/tsconfig/package-lib.json",
+    "extends": ["@atomichub/tsconfig/package-lib.json", "@atomichub/tsconfig/strict.json"],
     "compilerOptions": {
         "outDir": "./dist",
         "rootDir": "./src",
         "types": ["node", "mocha"]
     },
-    "include": ["src/**/*"]
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist", "build", "**/*.test.ts", "**/*.spec.ts"]
 }

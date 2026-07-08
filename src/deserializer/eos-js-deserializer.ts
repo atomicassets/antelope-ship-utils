@@ -9,7 +9,7 @@ interface IDeserializerParams {
 export class EOSJsDeserializer implements IDeserializer {
     waiting: number = 0;
 
-    private strategyDeserializer: IDeserializer;
+    private strategyDeserializer?: IDeserializer;
 
     constructor(private readonly params: IDeserializerParams) {}
 
@@ -25,6 +25,10 @@ export class EOSJsDeserializer implements IDeserializer {
     deserialize(
         param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>
     ): Promise<Array<{ success: boolean; data: unknown; message?: string }>> {
+        if (!this.strategyDeserializer) {
+            throw new Error('EOSJsDeserializer.deserialize called before init()');
+        }
+
         this.waiting += 1;
 
         try {

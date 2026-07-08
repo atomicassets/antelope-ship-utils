@@ -18,10 +18,16 @@ interface IStateHistoryConnectionParams {
 
 export class StateHistoryConnection extends EventEmitter {
     private readonly endpoint: string;
-    private connectionOptions: IShipConnectionOptions;
-    private shipOptions: IBlockRequest;
+    private connectionOptions: Required<IShipConnectionOptions>;
+    // Every field of IBlockRequest is individually optional (it also serves as a
+    // caller-supplied partial override in startProcessing()), but this instance's
+    // copy is always fully populated: the constructor seeds it with defaults, and
+    // startProcessing() merges caller overrides on top of those same defaults.
+    private shipOptions: Required<IBlockRequest>;
 
-    private consumer: IShipConsumer;
+    // Only set while a consumer is actively driving this connection (startProcessing()
+    // sets it, stopProcessing() clears it back to undefined).
+    private consumer?: IShipConsumer;
     private requiredDeltas: string[];
 
     private shipAbi?: ABI;
@@ -35,7 +41,7 @@ export class StateHistoryConnection extends EventEmitter {
     private blocksQueue: PQueue;
     private deserializer: EOSJsDeserializer;
 
-    private unconfirmed: number;
+    private unconfirmed = 0;
     private reconnectDelay: number;
 
     private lastActivityAt = 0;
@@ -64,6 +70,26 @@ export class StateHistoryConnection extends EventEmitter {
         this.blocksQueue = new PQueue({ concurrency: 1, autoStart: true });
 
         this.requiredDeltas = [];
+
+        // Real values are supplied by startProcessing(), which rebuilds this from the
+        // same defaults and layers the caller's overrides on top before any block
+        // request is sent.
+        this.shipOptions = StateHistoryConnection.createDefaultShipOptions();
+    }
+
+    // A factory (not a shared constant) because have_positions is a mutable array:
+    // a shared default would let every instance's positions bleed into each other.
+    private static createDefaultShipOptions(): Required<IBlockRequest> {
+        return {
+            start_block_num: 0,
+            end_block_num: 0xffffffff,
+            max_messages_in_flight: 1,
+            have_positions: [],
+            irreversible_only: false,
+            fetch_block: false,
+            fetch_traces: false,
+            fetch_deltas: false,
+        };
     }
 
     connect(): void {
@@ -146,6 +172,10 @@ export class StateHistoryConnection extends EventEmitter {
     }
 
     send(request: [string, any]): void {
+        if (!this.ws || !this.shipAbi) {
+            throw new Error('Cannot send a ship request before the connection and ABI are ready');
+        }
+
         this.ws.send(serializeEosioType('request', request, this.shipAbi));
     }
 
@@ -183,13 +213,17 @@ export class StateHistoryConnection extends EventEmitter {
                         get_blocks_result_v2: { version: 2 },
                     };
 
+                    // type was just checked against the same two literal keys above
+                    // (get_blocks_result_v0 / v1), both of which respConfig defines.
+                    const resultConfig = respConfig[type]!;
+
                     let blockDeserialize: Promise<any>;
                     let traces: any = [];
                     let deltas: any = [];
 
                     if (response.this_block) {
                         if (response.block) {
-                            if (respConfig[type].version === 2) {
+                            if (resultConfig.version === 2) {
                                 blockDeserialize = this.deserialize('signed_block_variant', response.block).then(
                                     (res: any) => {
                                         if (res[0] === 'signed_block_v1') {
@@ -199,7 +233,7 @@ export class StateHistoryConnection extends EventEmitter {
                                         throw new Error(`Unsupported table block type received ${res[0]}`);
                                     }
                                 );
-                            } else if (respConfig[type].version === 1) {
+                            } else if (resultConfig.version === 1) {
                                 if (response.block[0] === 'signed_block_v1') {
                                     blockDeserialize = Promise.resolve(response.block[1]);
                                 } else {
@@ -207,7 +241,7 @@ export class StateHistoryConnection extends EventEmitter {
                                         new Error(`Unsupported table block type received ${response.block[0]}`)
                                     );
                                 }
-                            } else if (respConfig[type].version === 0) {
+                            } else if (resultConfig.version === 0) {
                                 blockDeserialize = this.deserialize('signed_block', response.block);
                             } else {
                                 blockDeserialize = Promise.reject(
@@ -391,7 +425,7 @@ export class StateHistoryConnection extends EventEmitter {
         } catch (e) {
             this.emit('error', new ShipError('error while processing message', e));
 
-            this.ws.close();
+            this.ws?.close();
         }
     }
 
@@ -402,10 +436,10 @@ export class StateHistoryConnection extends EventEmitter {
 
         if (this.ws) {
             this.ws.terminate();
-            this.ws = null;
+            this.ws = undefined;
         }
 
-        this.shipAbi = null;
+        this.shipAbi = undefined;
         this.connected = false;
         this.connecting = false;
 
@@ -428,14 +462,7 @@ export class StateHistoryConnection extends EventEmitter {
         const requestConfig = await consumer.getRequestBlockConfig();
 
         this.shipOptions = {
-            start_block_num: 0,
-            end_block_num: 0xffffffff,
-            max_messages_in_flight: 1,
-            have_positions: [],
-            irreversible_only: false,
-            fetch_block: false,
-            fetch_traces: false,
-            fetch_deltas: false,
+            ...StateHistoryConnection.createDefaultShipOptions(),
             ...requestConfig,
         };
 
@@ -460,13 +487,17 @@ export class StateHistoryConnection extends EventEmitter {
         this.consumer = undefined;
         this.requiredDeltas = [];
 
-        this.ws.close();
+        this.ws?.close();
 
         this.blocksQueue.clear();
         this.blocksQueue.pause();
     }
 
     async processBlock(block: ShipBlockResponse): Promise<void> {
+        if (!this.consumer) {
+            throw new Error('Received a ship block before startProcessing() was called');
+        }
+
         if (!block.this_block) {
             if (this.shipOptions.start_block_num >= this.shipOptions.end_block_num) {
                 this.emit(
@@ -493,12 +524,18 @@ export class StateHistoryConnection extends EventEmitter {
     }
 
     private async deserialize(type: string, data: Uint8Array): Promise<any> {
-        const result = await this.deserializer.deserialize([{ type, data }]);
-        if (result[0].success) {
-            return result[0].data;
+        const [result] = await this.deserializer.deserialize([{ type, data }]);
+
+        // A single-element input always yields a single-element output.
+        if (!result) {
+            throw new Error(`No deserialization result returned for type ${type}`);
         }
 
-        throw new Error(result[0].message);
+        if (result.success) {
+            return result.data;
+        }
+
+        throw new Error(result.message);
     }
 
     private async deserializeArray(rows: Array<{ type: string; data: Uint8Array }>): Promise<any> {

@@ -5,7 +5,7 @@ export class ParallelDeserializer implements IDeserializer {
     waiting: number = 0;
 
     private deserializeWorkers: StaticPool<
-        (x: Array<{ type: string; data: Uint8Array | string; abi?: any }>) => Array<{
+        (x: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>) => Array<{
             success: true;
             data: unknown;
             message?: string;

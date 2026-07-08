@@ -17,7 +17,7 @@ export class LocalAbiProvider implements IAbiProvider {
     private client: APIClient;
     private savedAbis: IAbiHistory[] = [];
 
-    constructor(private readonly params: ILocalAbiProviderParams) {
+    constructor(params: ILocalAbiProviderParams) {
         this.client = new APIClient(
             new FetchProvider(params.rpcEndpoint, { fetch: params.fetchApi })
         );
@@ -42,8 +42,6 @@ export class LocalAbiProvider implements IAbiProvider {
         const result = await this.client.v1.chain.get_abi(contract);
 
         if (!result.abi) {
-            await this.setAbi(contract, Number(info.head_block_num), undefined);
-
             throw new Error(`No Abi found for ${contract}`);
         }
 
