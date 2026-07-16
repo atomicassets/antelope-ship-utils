@@ -46,6 +46,7 @@ export class StateHistoryConnection extends EventEmitter {
 
     private lastActivityAt = 0;
     private heartbeatTimer?: NodeJS.Timeout;
+    private reconnectTimer?: NodeJS.Timeout;
 
     constructor(params: IStateHistoryConnectionParams) {
         super();
@@ -102,17 +103,45 @@ export class StateHistoryConnection extends EventEmitter {
                 maxPayload: 16 * 1024 * 1024 * 1024,
             });
 
-            this.ws.on('open', () => this.onConnect());
-            this.ws.on('message', (data: any) => {
+            // Captured so the 'error'/'close' handlers below can tell a stale
+            // socket's late event apart from the currently active one: once
+            // onClose() or a fresh connect() replaces this.ws, an event still
+            // in flight from the old socket must not touch the new state.
+            const socket = this.ws;
+
+            socket.on('open', () => this.onConnect());
+            socket.on('message', (data: any) => {
                 this.lastActivityAt = Date.now();
                 this.onMessage(data);
             });
-            this.ws.on('pong', () => {
+            socket.on('pong', () => {
                 this.lastActivityAt = Date.now();
             });
-            this.ws.on('close', () => this.onClose());
-            this.ws.on('error', (e: Error) => {
+            socket.on('close', () => {
+                if (this.ws !== socket) {
+                    return;
+                }
+
+                this.onClose().catch((closeError) => {
+                    this.emit('error', new ShipError('Failed to close Ship connection cleanly', closeError));
+                });
+            });
+            socket.on('error', (e: Error) => {
+                if (this.ws !== socket) {
+                    return;
+                }
+
+                // 'close' normally drives onClose() -> reconnect(), but is not
+                // guaranteed to fire after every 'error' (e.g. some errors never
+                // reach a close frame). Clear the connecting latch and schedule
+                // a reconnect here too so a missing 'close' can't permanently
+                // stall the reader. reconnect() itself is idempotent against a
+                // 'close' that follows and also calls it.
+                this.connecting = false;
+
                 this.emit('error', new ShipError('Websocket Error', e));
+
+                this.reconnect();
             });
         }
     }
@@ -157,14 +186,24 @@ export class StateHistoryConnection extends EventEmitter {
     }
 
     reconnect(): void {
-        if (this.stopped) {
+        if (this.stopped || this.connecting || this.connected) {
+            return;
+        }
+
+        // A reconnect timer is already pending (e.g. 'error' scheduled one and
+        // the following 'close' called reconnect() again) - never schedule a
+        // second one, and never double the backoff for a call that didn't
+        // actually schedule anything.
+        if (this.reconnectTimer) {
             return;
         }
 
         const delay = this.reconnectDelay;
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60000);
 
-        setTimeout(() => {
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = undefined;
+
             this.emit('info', `Reconnecting to Ship in ${delay / 1000}s...`);
 
             this.connect();
@@ -444,7 +483,15 @@ export class StateHistoryConnection extends EventEmitter {
         this.connecting = false;
 
         this.blocksQueue.clear();
-        await this.deserializer?.terminate();
+
+        try {
+            await this.deserializer?.terminate();
+        } catch (e) {
+            // A rejection here must never skip reconnect() below - it would leave
+            // the reader silently stalled with no scheduled retry.
+            this.emit('error', new ShipError('Failed to terminate deserializer', e));
+        }
+
         this.reconnect();
     }
 
@@ -483,6 +530,11 @@ export class StateHistoryConnection extends EventEmitter {
         this.stopped = true;
 
         this.stopHeartbeat();
+
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
 
         this.consumer = undefined;
         this.requiredDeltas = [];

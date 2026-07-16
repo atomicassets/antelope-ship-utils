@@ -94,3 +94,176 @@ describe('StateHistoryConnection heartbeat watchdog', () => {
         expect(pingsSeen).to.be.greaterThanOrEqual(3);
     });
 });
+
+describe('StateHistoryConnection reconnect stall vectors', () => {
+    let server: WebSocketServer;
+    let connection: StateHistoryConnection;
+
+    afterEach(async () => {
+        // stopProcessing() is the real teardown path: it flips stopped, stops
+        // the heartbeat, and - the part that matters here - clears any pending
+        // reconnectTimer. Without that, a test that exercised reconnect()
+        // leaves a live setTimeout behind and mocha hangs on exit.
+        (connection as any).stopProcessing();
+        (connection as any).ws?.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    it('does not leave a permanent connecting latch when error fires without close', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const port = await listen(server);
+
+        connection = new StateHistoryConnection({
+            endpoint: `ws://127.0.0.1:${port}`,
+        });
+
+        connection.on('error', () => undefined);
+        connection.on('info', () => undefined);
+
+        (connection as any).stopped = false;
+        connection.connect();
+
+        // Simulate an 'error' event before the real handshake can complete
+        // ('open' fires asynchronously), reproducing 'error' without 'close'
+        // - the confirmed stall vector - while connecting is still latched.
+        expect((connection as any).connecting).to.equal(true);
+
+        (connection as any).ws.emit('error', new Error('simulated socket error'));
+
+        expect((connection as any).connecting).to.equal(false);
+        // The 'error' handler also calls reconnect() itself now, so a missing
+        // 'close' still gets a retry scheduled instead of waiting forever.
+        expect((connection as any).reconnectTimer).to.not.equal(undefined);
+
+        // With connecting cleared, a later connect() call is not a silent no-op.
+        (connection as any).connected = false;
+        (connection as any).ws = undefined;
+        connection.connect();
+
+        expect((connection as any).connecting).to.equal(true);
+    });
+
+    it('still schedules a reconnect when deserializer.terminate() rejects', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const port = await listen(server);
+
+        connection = new StateHistoryConnection({
+            endpoint: `ws://127.0.0.1:${port}`,
+            deserializer: {
+                init: async () => undefined,
+                deserialize: async () => [],
+                terminate: async () => {
+                    throw new Error('simulated terminate failure');
+                },
+            } as any,
+        });
+
+        const errors: string[] = [];
+        connection.on('error', (e: Error) => errors.push(e.message));
+        connection.on('info', () => undefined);
+
+        let reconnectCalled = false;
+        (connection as any).reconnect = () => {
+            reconnectCalled = true;
+        };
+
+        (connection as any).stopped = false;
+        connection.connect();
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        await (connection as any).onClose();
+
+        expect(reconnectCalled).to.equal(true);
+        expect(errors.some((m) => m.includes('Failed to terminate deserializer'))).to.equal(true);
+    });
+
+    it('schedules exactly one pending reconnect when error and close both fire, doubling backoff once', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const port = await listen(server);
+
+        // A stub deserializer keeps terminate() from touching the real
+        // worker-thread pool, so the only setTimeout calls observed below
+        // come from reconnect() itself.
+        connection = new StateHistoryConnection({
+            endpoint: `ws://127.0.0.1:${port}`,
+            deserializer: {
+                init: async () => undefined,
+                deserialize: async () => [],
+                terminate: async () => undefined,
+            } as any,
+        });
+
+        connection.on('error', () => undefined);
+        connection.on('info', () => undefined);
+
+        (connection as any).stopped = false;
+        connection.connect();
+
+        const initialDelay = (connection as any).reconnectDelay;
+        const socket = (connection as any).ws;
+
+        const originalSetTimeout = global.setTimeout;
+        let scheduleCount = 0;
+        (global as any).setTimeout = ((...args: unknown[]) => {
+            scheduleCount += 1;
+
+            return (originalSetTimeout as any)(...args);
+        }) as typeof setTimeout;
+
+        try {
+            // 'error' fires first: clears the connecting latch and calls
+            // reconnect(), which schedules the only timer we expect.
+            socket.emit('error', new Error('simulated socket error'));
+
+            // 'close' follows right after (the real handler order once a
+            // socket errors out); onClose() calls reconnect() again, and it
+            // must see the pending timer and no-op rather than schedule a
+            // second one or double the backoff again.
+            await (connection as any).onClose();
+        } finally {
+            global.setTimeout = originalSetTimeout;
+        }
+
+        expect(scheduleCount).to.equal(1);
+        expect((connection as any).reconnectDelay).to.equal(initialDelay * 2);
+        expect((connection as any).reconnectTimer).to.not.equal(undefined);
+    });
+
+    it("ignores a stale socket's late error and does not clear a newer connect's latch", async () => {
+        server = new WebSocketServer({ port: 0 });
+        const port = await listen(server);
+
+        connection = new StateHistoryConnection({
+            endpoint: `ws://127.0.0.1:${port}`,
+        });
+
+        connection.on('error', () => undefined);
+        connection.on('info', () => undefined);
+
+        (connection as any).stopped = false;
+        connection.connect();
+
+        // Captures the socket connect() just wired 'error'/'close' handlers
+        // onto, before it is replaced by a newer in-flight attempt below.
+        const staleSocket = (connection as any).ws;
+
+        // Simulate the old socket having already been superseded (e.g. by
+        // onClose() tearing down and a fresh connect() firing) without
+        // waiting for a real close round-trip.
+        (connection as any).connected = false;
+        (connection as any).connecting = false;
+        (connection as any).ws = undefined;
+        connection.connect();
+
+        expect((connection as any).connecting).to.equal(true);
+        expect((connection as any).ws).to.not.equal(staleSocket);
+
+        // staleSocket's handlers were closed over the old `socket` identity;
+        // this.ws now points at the newer socket, so the identity guard must
+        // make this a no-op instead of clearing the newer attempt's latch.
+        staleSocket.emit('error', new Error('stale socket error'));
+
+        expect((connection as any).connecting).to.equal(true);
+    });
+});
