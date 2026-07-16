@@ -14,7 +14,7 @@
     },
     "scripts": {
         "build": "tsc",
-        "check-types": "tsc --noEmit",
+        "check-types": "tsc-native --noEmit",
         "dev": "tsc --watch",
         "clean": "rm -rf dist",
         "lint": "eslint 'src/**/*.ts'",
@@ -33,6 +33,7 @@
         "@types/common-tags": "^1.8.4",
         "@types/node": "^22",
         "@types/ws": "^8.5.10",
-        "typescript": "^6.0.0"
+        "typescript": "^6.0.0",
+        "@atomichub/tsc-native": "workspace:*"
     }
 }
