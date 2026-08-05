@@ -7,7 +7,7 @@ import { IBlockRequest, IShipConnectionOptions, ShipBlockResponse } from './type
 import { deserializeEosioType, serializeEosioType } from './deserializer/serialization';
 import ShipError from './error/ship';
 import { IShipConsumer } from './types/interfaces';
-import { oneLineTrim } from 'common-tags';
+import { oneLine, oneLineTrim } from 'common-tags';
 import { EOSJsDeserializer } from './deserializer/eos-js-deserializer';
 
 interface IStateHistoryConnectionParams {
@@ -44,9 +44,24 @@ export class StateHistoryConnection extends EventEmitter {
     private unconfirmed = 0;
     private reconnectDelay: number;
 
+    // Consecutive block/trace/delta payloads the node served empty while the
+    // matching fetch_* flag was on and the consumer did not opt into empty
+    // data. Drives the reconnect escalation in handleMissingBlockData() and is
+    // exported through getMissingDataFailures().
+    private missingDataFailures = 0;
+
+    // Bumped whenever handleMissingBlockData() tears the connection down. A
+    // queued task captures it at entry, so work that started before the
+    // teardown can tell it belongs to a dead connection and skip both the
+    // failure-counter reset and the ack.
+    private connectionGeneration = 0;
+
     private lastActivityAt = 0;
     private heartbeatTimer?: NodeJS.Timeout;
     private reconnectTimer?: NodeJS.Timeout;
+
+    private static readonly INITIAL_RECONNECT_DELAY_MS = 5000;
+    private static readonly MAX_RECONNECT_DELAY_MS = 60000;
 
     constructor(params: IStateHistoryConnectionParams) {
         super();
@@ -66,7 +81,7 @@ export class StateHistoryConnection extends EventEmitter {
         this.connected = false;
         this.connecting = false;
         this.stopped = true;
-        this.reconnectDelay = 5000;
+        this.reconnectDelay = StateHistoryConnection.INITIAL_RECONNECT_DELAY_MS;
 
         this.blocksQueue = new PQueue({ concurrency: 1, autoStart: true });
 
@@ -199,7 +214,7 @@ export class StateHistoryConnection extends EventEmitter {
         }
 
         const delay = this.reconnectDelay;
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60000);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, StateHistoryConnection.MAX_RECONNECT_DELAY_MS);
 
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = undefined;
@@ -221,13 +236,66 @@ export class StateHistoryConnection extends EventEmitter {
     onConnect(): void {
         this.connected = true;
         this.connecting = false;
-        this.reconnectDelay = 5000;
+        this.reconnectDelay = StateHistoryConnection.INITIAL_RECONNECT_DELAY_MS;
 
         this.startHeartbeat();
     }
 
     getQueueSize(): number {
         return this.blocksQueue.size;
+    }
+
+    /**
+     * Consecutive blocks the node served without the block/trace/delta payload
+     * the request asked for. Non-zero means this connection is retrying rather
+     * than reading; it resets as soon as a block processes end to end.
+     */
+    getMissingDataFailures(): number {
+        return this.missingDataFailures;
+    }
+
+    /**
+     * A block arrived without a payload the request asked for and the consumer
+     * did not opt into empty data. Recover by reconnecting, never by pausing:
+     * nothing outside startProcessing() restarts blocksQueue, so a pause here
+     * silences the reader for the whole life of the process, and the idle
+     * watchdog cannot rescue it either because the peer keeps answering pings
+     * on a socket that is delivering nothing.
+     *
+     * The usual cause is a start block below the node's state-history
+     * retention floor, which repeats on every attempt, so the delay escalates
+     * off the failure count rather than off the socket lifecycle: the
+     * handshake keeps succeeding and onConnect() resets reconnectDelay each
+     * time, which would otherwise pin the retry at the base delay forever.
+     */
+    private handleMissingBlockData(kind: 'block' | 'trace' | 'delta', blockNum: number): void {
+        this.missingDataFailures += 1;
+        this.connectionGeneration += 1;
+
+        this.reconnectDelay = Math.min(
+            StateHistoryConnection.INITIAL_RECONNECT_DELAY_MS * 2 ** (this.missingDataFailures - 1),
+            StateHistoryConnection.MAX_RECONNECT_DELAY_MS
+        );
+
+        this.emit(
+            'error',
+            new ShipError(
+                oneLine`Block #${blockNum} does not contain ${kind} data,
+                    reconnecting in ${this.reconnectDelay / 1000}s
+                    (consecutive missing-data failures: ${this.missingDataFailures}).
+                    A start block below the ship node's state-history retention floor is the usual cause.`
+            )
+        );
+
+        // clear() only drops queued-but-unstarted blocks; a task already
+        // mid-await survives it and is what the ack-send guard in onMessage()
+        // below is for. onClose() clears the queue again and reconnect()
+        // schedules the retry with the delay set above.
+        this.blocksQueue.clear();
+
+        // terminate() fires 'close', which routes through onClose() -> reconnect().
+        // A missing socket means onClose() already ran and already scheduled one.
+        this.ws?.terminate();
     }
 
     async onMessage(data: any): Promise<void> {
@@ -294,12 +362,7 @@ export class StateHistoryConnection extends EventEmitter {
                                     `Block #${response.this_block.block_num} does not contain block data`
                                 );
                             } else {
-                                this.emit(
-                                    'error',
-                                    new ShipError(`Block #${response.this_block.block_num} does not contain block data`)
-                                );
-
-                                return this.blocksQueue.pause();
+                                return this.handleMissingBlockData('block', response.this_block.block_num);
                             }
                         }
 
@@ -312,12 +375,7 @@ export class StateHistoryConnection extends EventEmitter {
                                     `Block #${response.this_block.block_num} does not contain trace data`
                                 );
                             } else {
-                                this.emit(
-                                    'error',
-                                    new ShipError(`Block #${response.this_block.block_num} does not contain trace data`)
-                                );
-
-                                return this.blocksQueue.pause();
+                                return this.handleMissingBlockData('trace', response.this_block.block_num);
                             }
                         }
 
@@ -332,18 +390,15 @@ export class StateHistoryConnection extends EventEmitter {
                                     `Block #${response.this_block.block_num} does not contain delta data`
                                 );
                             } else {
-                                this.emit(
-                                    'error',
-                                    new ShipError(`Block #${response.this_block.block_num} does not contain delta data`)
-                                );
-
-                                return this.blocksQueue.pause();
+                                return this.handleMissingBlockData('delta', response.this_block.block_num);
                             }
                         }
                     }
 
                     this.blocksQueue
                         .add(async () => {
+                            const taskGeneration = this.connectionGeneration;
+
                             if (response.this_block) {
                                 this.shipOptions.start_block_num = response.this_block.block_num + 1;
                             } else {
@@ -446,11 +501,42 @@ export class StateHistoryConnection extends EventEmitter {
                                 throw error;
                             }
 
+                            // A block that made it end to end proves the node is
+                            // serving usable payloads again, so the missing-data
+                            // escalation starts over from the base delay. Skip it
+                            // when a teardown started after this task did: that
+                            // block belongs to the dead connection, and resetting
+                            // here would wipe the count the escalation runs on.
+                            if (taskGeneration === this.connectionGeneration) {
+                                this.missingDataFailures = 0;
+                            }
+
                             this.unconfirmed += 1;
 
                             if (this.unconfirmed >= this.connectionOptions.min_block_confirmation) {
-                                this.send(['get_blocks_ack_request_v0', { num_messages: this.unconfirmed }]);
-                                this.unconfirmed = 0;
+                                // A handleMissingBlockData() teardown that started after this
+                                // task began (clear() cannot reach an already-running task)
+                                // leaves this task acking into a dead connection. send() would
+                                // throw into this queued task's promise, which has no rejection
+                                // handler, so skip the ack and let the pending reconnect take
+                                // over. The socket is checked by readyState, not presence:
+                                // terminate() moves it to CLOSING/CLOSED immediately while
+                                // onClose() nulls the field only once the close event fires,
+                                // so a non-null ws can still reject a send.
+                                if (
+                                    taskGeneration !== this.connectionGeneration ||
+                                    !this.ws ||
+                                    !this.shipAbi ||
+                                    this.ws.readyState !== WebSocket.OPEN
+                                ) {
+                                    this.emit(
+                                        'debug',
+                                        `Skipping ack for block #${response.this_block.block_num}: connection torn down mid-task`
+                                    );
+                                } else {
+                                    this.send(['get_blocks_ack_request_v0', { num_messages: this.unconfirmed }]);
+                                    this.unconfirmed = 0;
+                                }
                             }
                         })
                         .then();
