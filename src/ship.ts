@@ -314,15 +314,15 @@ export class StateHistoryConnection extends EventEmitter {
             } else {
                 const [type, response] = deserializeEosioType('result', data, this.shipAbi);
 
-                if (['get_blocks_result_v0', 'get_blocks_result_v1'].includes(type)) {
+                if (['get_blocks_result_v0', 'get_blocks_result_v1', 'get_blocks_result_v2'].includes(type)) {
                     const respConfig: { [key: string]: { version: number } } = {
                         get_blocks_result_v0: { version: 0 },
                         get_blocks_result_v1: { version: 1 },
                         get_blocks_result_v2: { version: 2 },
                     };
 
-                    // type was just checked against the same two literal keys above
-                    // (get_blocks_result_v0 / v1), both of which respConfig defines.
+                    // type was just checked against the same three literal keys above
+                    // (get_blocks_result_v0 / v1 / v2), all of which respConfig defines.
                     const resultConfig = respConfig[type]!;
 
                     let blockDeserialize: Promise<any>;

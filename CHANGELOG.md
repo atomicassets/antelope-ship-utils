@@ -19,6 +19,7 @@ Initial standalone release, reworked from eosio-ship-utils 0.0.16 (see NOTICE).
 ### Bug fixes
 
 - Fixes a websocket error path that could strand the reconnect state machine instead of retrying.
+- Handles get_blocks_result_v2 messages instead of logging them as unsupported. The result-version table listed the version while the dispatch guard in front of the block path left it out.
 - Keeps the ShipError cause chain intact, so a wrapped error such as a Postgres error code survives up to the caller.
 - Skips a trace or delta that fails to deserialize instead of crashing the whole block.
 - Guards against calling terminate() before the deserializer has initialized.

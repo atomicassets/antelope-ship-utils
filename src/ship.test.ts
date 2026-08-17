@@ -5,6 +5,7 @@ import { ABI } from '@wharfkit/antelope';
 
 import { StateHistoryConnection } from './ship';
 import { deserializeEosioType, serializeEosioType } from './deserializer/serialization';
+import { EOSJsDeserializer } from './deserializer/eos-js-deserializer';
 import { IShipConnectionOptions } from './types/ship';
 
 function listen(server: WebSocketServer): Promise<number> {
@@ -14,12 +15,13 @@ function listen(server: WebSocketServer): Promise<number> {
 }
 
 // Minimal stand-in for the SHIP ABI, carrying what onMessage() reads off a
-// get_blocks_result_v0 (the block positions and the three optional payloads)
-// and the ack request the client sends back.
+// get_blocks_result_v0 or a get_blocks_result_v2 (the block positions, the three
+// optional payloads, and the signed block a version 2 result carries as bytes)
+// plus the ack request the client sends back.
 // Real nodes send a much larger ABI, but every field below is named and typed
 // as the state_history_plugin declares it, so a response built here decodes
 // through the package's own deserializer exactly as a live one would.
-const shipAbi = ABI.from({
+const shipAbiJson = {
     version: 'eosio::abi/1.1',
     types: [],
     structs: [
@@ -45,19 +47,52 @@ const shipAbi = ABI.from({
             ],
         },
         {
+            name: 'get_blocks_result_v2',
+            base: '',
+            fields: [
+                { name: 'head', type: 'block_position' },
+                { name: 'last_irreversible', type: 'block_position' },
+                { name: 'this_block', type: 'block_position?' },
+                { name: 'prev_block', type: 'block_position?' },
+                // Version 2 ships the block as bytes holding a serialized
+                // signed_block_variant, where version 1 ships the variant itself.
+                { name: 'block', type: 'bytes?' },
+                { name: 'traces', type: 'bytes?' },
+                { name: 'deltas', type: 'bytes?' },
+            ],
+        },
+        {
+            name: 'signed_block_header',
+            base: '',
+            fields: [
+                { name: 'timestamp', type: 'block_timestamp_type' },
+                { name: 'producer', type: 'name' },
+                { name: 'confirmed', type: 'uint16' },
+                { name: 'previous', type: 'checksum256' },
+                { name: 'transaction_mroot', type: 'checksum256' },
+                { name: 'action_mroot', type: 'checksum256' },
+                { name: 'schedule_version', type: 'uint32' },
+            ],
+        },
+        { name: 'signed_block_v0', base: 'signed_block_header', fields: [] },
+        { name: 'signed_block_v1', base: 'signed_block_header', fields: [] },
+        {
             name: 'get_blocks_ack_request_v0',
             base: '',
             fields: [{ name: 'num_messages', type: 'uint32' }],
         },
     ],
     variants: [
-        { name: 'result', types: ['get_blocks_result_v0'] },
+        { name: 'result', types: ['get_blocks_result_v0', 'get_blocks_result_v2'] },
+        { name: 'signed_block_variant', types: ['signed_block_v0', 'signed_block_v1'] },
         { name: 'request', types: ['get_blocks_ack_request_v0'] },
     ],
     actions: [],
     tables: [],
     ricardian_clauses: [],
-});
+};
+
+const shipAbi = ABI.from(shipAbiJson);
 
 const BLOCK_ID = '00'.repeat(32);
 
@@ -85,6 +120,50 @@ function payloadlessBlockMessage(blockNum: number): Uint8Array {
     );
 }
 
+/**
+ * A get_blocks_result_v2 whose block field holds a serialized
+ * signed_block_variant, the shape a node serves at version 2. The variant
+ * member is a parameter so a test can send the one the client unwraps
+ * (signed_block_v1) or one it has to reject.
+ */
+function versionedBlockMessage(blockNum: number, blockVariant: string): Uint8Array {
+    const block = serializeEosioType(
+        'signed_block_variant',
+        [
+            blockVariant,
+            {
+                // The block_timestamp epoch: a fixture value, not a slot any
+                // assertion depends on.
+                timestamp: '2000-01-01T00:00:00.000',
+                producer: 'eosio',
+                confirmed: 0,
+                previous: BLOCK_ID,
+                transaction_mroot: BLOCK_ID,
+                action_mroot: BLOCK_ID,
+                schedule_version: 3,
+            },
+        ],
+        shipAbi
+    );
+
+    return serializeEosioType(
+        'result',
+        [
+            'get_blocks_result_v2',
+            {
+                head: { block_num: blockNum + 10, block_id: BLOCK_ID },
+                last_irreversible: { block_num: blockNum - 1, block_id: BLOCK_ID },
+                this_block: { block_num: blockNum, block_id: BLOCK_ID },
+                prev_block: { block_num: blockNum - 1, block_id: BLOCK_ID },
+                block,
+                traces: null,
+                deltas: null,
+            },
+        ],
+        shipAbi
+    );
+}
+
 interface IDrivenConnection {
     connection: StateHistoryConnection;
     errors: string[];
@@ -96,17 +175,24 @@ interface IDrivenConnection {
  * A connection wired past its handshake so onMessage() can be driven directly:
  * the ABI is already present, a consumer is attached, and the block request is
  * the production shape (fetch_traces on, fetch_block off so the trace branch is
- * the one under test). min_block_confirmation is parked high so a processed
- * block never reaches send(), which the stub ABI cannot serialize.
+ * the one under test). min_block_confirmation is parked high unless a caller
+ * lowers it, so a processed block only reaches send() where a test wants it to.
+ * A caller whose payload has to decode for real passes an initialized
+ * deserializer; the default stub returns nothing and suits the tests that never
+ * put a block payload on the wire.
  */
-function driveConnection(port: number, connectionOptions: IShipConnectionOptions): IDrivenConnection {
+function driveConnection(
+    port: number,
+    connectionOptions: IShipConnectionOptions,
+    deserializer?: EOSJsDeserializer
+): IDrivenConnection {
     const connection = new StateHistoryConnection({
         endpoint: `ws://127.0.0.1:${port}`,
-        deserializer: {
+        deserializer: (deserializer ?? {
             init: async () => undefined,
             deserialize: async () => [],
             terminate: async () => undefined,
-        } as any,
+        }) as any,
         connectionOptions: { min_block_confirmation: 1000, ...connectionOptions },
     });
 
@@ -799,5 +885,92 @@ describe('StateHistoryConnection ack backpressure', () => {
         expect(driven.errors).to.deep.equal([]);
         expect((connection as any).connected).to.equal(true);
         expect((connection as any).reconnectTimer).to.equal(undefined);
+    });
+});
+
+describe('StateHistoryConnection get_blocks_result_v2', () => {
+    let server: WebSocketServer;
+    let connection: StateHistoryConnection;
+
+    afterEach(async () => {
+        (connection as any).stopProcessing();
+        (connection as any).ws?.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    // The block in a version 2 result only exists as bytes, so these tests run
+    // the real deserializer over the stub ABI instead of the stub deserializer
+    // the payloadless tests use.
+    async function connectDriven(): Promise<IDrivenConnection> {
+        const port = await listen(server);
+        const deserializer = new EOSJsDeserializer({ threads: 0 });
+
+        await deserializer.init(shipAbiJson);
+
+        const driven = driveConnection(port, { allow_empty_traces: true }, deserializer);
+
+        connection = driven.connection;
+
+        (connection as any).stopped = false;
+        connection.connect();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        return driven;
+    }
+
+    it('unwraps the signed_block_v1 a v2 result carries and passes the block to the consumer', async () => {
+        server = new WebSocketServer({ port: 0 });
+
+        const driven = await connectDriven();
+
+        await connection.onMessage(versionedBlockMessage(391178535, 'signed_block_v1'));
+        await (connection as any).blocksQueue.onIdle();
+
+        expect(driven.consumed).to.have.length(1);
+
+        // The consumer sees the same merge the v0 and v1 paths produce: the
+        // unwrapped block fields over this_block, with head and last_irreversible
+        // attached.
+        const block = driven.consumed[0]?.block as any;
+
+        expect(block.block_num).to.equal(391178535);
+        expect(block.block_id).to.equal(BLOCK_ID);
+        expect(block.producer).to.equal('eosio');
+        expect(block.schedule_version).to.equal(3);
+        expect(block.head.block_num).to.equal(391178545);
+        expect(block.last_irreversible.block_num).to.equal(391178534);
+        expect((connection as any).shipOptions.start_block_num).to.equal(391178536);
+    });
+
+    it('errors and pauses the queue when a v2 result carries an unsupported block variant', async () => {
+        server = new WebSocketServer({ port: 0 });
+
+        const driven = await connectDriven();
+
+        // The package leaves the queued task's rejection unhandled on purpose,
+        // so capture it here instead of letting it fail the run as an
+        // unhandledRejection.
+        const blocksQueue = (connection as any).blocksQueue;
+        const originalAdd = blocksQueue.add.bind(blocksQueue);
+        let taskError: unknown;
+        blocksQueue.add = (fn: () => Promise<unknown>, options?: unknown) =>
+            originalAdd(fn, options).catch((e: unknown) => {
+                taskError = e;
+            });
+
+        await connection.onMessage(versionedBlockMessage(391178535, 'signed_block_v0'));
+        await blocksQueue.onIdle();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(driven.consumed).to.have.length(0);
+        expect(blocksQueue.isPaused).to.equal(true);
+        expect((taskError as Error).message).to.equal('Unsupported table block type received signed_block_v0');
+        expect(
+            driven.errors.some(
+                (m) =>
+                    m.includes('Failed to deserialize Block at block #391178535') &&
+                    m.includes('Unsupported table block type received signed_block_v0')
+            )
+        ).to.equal(true);
     });
 });
