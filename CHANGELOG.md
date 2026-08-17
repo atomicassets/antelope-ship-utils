@@ -12,6 +12,7 @@ Initial standalone release, reworked from eosio-ship-utils 0.0.16 (see NOTICE).
 - Adds a heartbeat ping and an idle-timeout watchdog, so a half-open socket whose peer disappeared without a close frame gets torn down and reconnected instead of hanging.
 - Adds exponential reconnect backoff, from 5 seconds up to a 60-second ceiling.
 - Reconnects on an empty SHIP payload instead of pausing the block queue forever.
+- Adds max_blocks_queue ack backpressure: while the block queue sits at or above the ceiling, the ack the node needs before it sends past max_messages_in_flight is withheld, and the accumulated count goes out in one ack once the queue drains.
 - Retries deserialization against older cached ABIs when the current ABI version does not match the payload.
 - Emits a per-listener timing breakdown from BlockProcessor, so a slow trace or delta listener is identifiable.
 

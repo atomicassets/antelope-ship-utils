@@ -73,6 +73,7 @@ export class StateHistoryConnection extends EventEmitter {
             allow_empty_blocks: false,
             heartbeat_interval_ms: 30 * 1000,
             idle_timeout_ms: 300 * 1000,
+            max_blocks_queue: 0,
             ...(params.connectionOptions || {}),
         };
 
@@ -513,7 +514,18 @@ export class StateHistoryConnection extends EventEmitter {
 
                             this.unconfirmed += 1;
 
-                            if (this.unconfirmed >= this.connectionOptions.min_block_confirmation) {
+                            // SHIP sends past max_messages_in_flight only once an ack
+                            // arrives, so withholding the ack is the strongest
+                            // backpressure the client has on the node's send side.
+                            // unconfirmed keeps accumulating while it is withheld and
+                            // goes out in one ack once the queue drains.
+                            const maxQueue = this.connectionOptions.max_blocks_queue;
+                            const queueOverloaded = maxQueue > 0 && this.blocksQueue.size >= maxQueue;
+
+                            if (
+                                this.unconfirmed >= this.connectionOptions.min_block_confirmation &&
+                                !queueOverloaded
+                            ) {
                                 // A handleMissingBlockData() teardown that started after this
                                 // task began (clear() cannot reach an already-running task)
                                 // leaves this task acking into a dead connection. send() would

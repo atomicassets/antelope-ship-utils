@@ -53,6 +53,14 @@ export interface IShipConnectionOptions {
      * forever instead of reconnecting.
      */
     idle_timeout_ms?: number;
+    /**
+     * Soft ceiling on the block queue. While the queue holds at least this many
+     * blocks, the client withholds the ack, which is the only lever it has on the
+     * node's send side: SHIP sends past max_messages_in_flight only after an ack.
+     * The accumulated count goes out in one ack once the queue drains under the
+     * ceiling. Zero, the default, keeps the plain min_block_confirmation cadence.
+     */
+    max_blocks_queue?: number;
 }
 
 export interface IBlockRequest {

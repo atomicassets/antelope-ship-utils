@@ -88,6 +88,7 @@ optional; the defaults are the ones `StateHistoryConnection` applies.
 | `allow_empty_blocks` | `false` | Same, for an empty block payload. |
 | `heartbeat_interval_ms` | `30000` | Interval between websocket pings while connected. |
 | `idle_timeout_ms` | `300000` | Terminate the socket, and reconnect, once this long passes with no message or pong, catching a half-open connection whose peer disappeared without a close frame. |
+| `max_blocks_queue` | `0` | Ceiling on the block queue: while the queue holds at least this many blocks the ack is withheld, so the node stops at `max_messages_in_flight` until the queue drains and the accumulated count goes out in one ack. A withheld ack does not trip the idle timeout, because the heartbeat pong keeps refreshing the activity clock. Zero applies no ceiling. |
 
 ## Error handling
 

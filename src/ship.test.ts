@@ -4,7 +4,7 @@ import { AddressInfo } from 'net';
 import { ABI } from '@wharfkit/antelope';
 
 import { StateHistoryConnection } from './ship';
-import { serializeEosioType } from './deserializer/serialization';
+import { deserializeEosioType, serializeEosioType } from './deserializer/serialization';
 import { IShipConnectionOptions } from './types/ship';
 
 function listen(server: WebSocketServer): Promise<number> {
@@ -13,8 +13,9 @@ function listen(server: WebSocketServer): Promise<number> {
     });
 }
 
-// Minimal stand-in for the SHIP ABI, carrying only what onMessage() reads off a
-// get_blocks_result_v0: the block positions and the three optional payloads.
+// Minimal stand-in for the SHIP ABI, carrying what onMessage() reads off a
+// get_blocks_result_v0 (the block positions and the three optional payloads)
+// and the ack request the client sends back.
 // Real nodes send a much larger ABI, but every field below is named and typed
 // as the state_history_plugin declares it, so a response built here decodes
 // through the package's own deserializer exactly as a live one would.
@@ -43,8 +44,16 @@ const shipAbi = ABI.from({
                 { name: 'deltas', type: 'bytes?' },
             ],
         },
+        {
+            name: 'get_blocks_ack_request_v0',
+            base: '',
+            fields: [{ name: 'num_messages', type: 'uint32' }],
+        },
     ],
-    variants: [{ name: 'result', types: ['get_blocks_result_v0'] }],
+    variants: [
+        { name: 'result', types: ['get_blocks_result_v0'] },
+        { name: 'request', types: ['get_blocks_ack_request_v0'] },
+    ],
     actions: [],
     tables: [],
     ricardian_clauses: [],
@@ -602,5 +611,193 @@ describe('StateHistoryConnection missing-data backoff', () => {
         expect(delays).to.deep.equal([5000, 10000, 20000, 40000, 60000, 60000]);
         expect(connection.getMissingDataFailures()).to.equal(6);
         expect((connection as any).blocksQueue.isPaused).to.equal(false);
+    });
+});
+
+interface IReceivedAck {
+    numMessages: number;
+    receivedAt: number;
+}
+
+/**
+ * Acks the fake node received, decoded back through the stub ABI. An ack is the
+ * only thing the client sends in these tests, so the array is the ack cadence.
+ */
+function collectAcks(server: WebSocketServer): IReceivedAck[] {
+    const acks: IReceivedAck[] = [];
+
+    server.on('connection', (ws) => {
+        ws.on('message', (data: Buffer) => {
+            const [, request] = deserializeEosioType('request', Uint8Array.from(data), shipAbi);
+
+            acks.push({ numMessages: request.num_messages, receivedAt: Date.now() });
+        });
+    });
+
+    return acks;
+}
+
+/**
+ * Parks every block inside consume() until the returned function releases one,
+ * so each ack decision runs at a queue depth the test controls.
+ */
+function gateConsumer(driven: IDrivenConnection): () => Promise<void> {
+    const parked: Array<() => void> = [];
+
+    (driven.connection as any).consumer = {
+        consume: async (block: any) => {
+            driven.consumed.push(block);
+
+            await new Promise<void>((resolve) => parked.push(resolve));
+        },
+    };
+
+    return async function releaseOne(): Promise<void> {
+        const release = parked.shift();
+
+        if (!release) {
+            throw new Error('No block is parked inside consume()');
+        }
+
+        release();
+
+        // Let the released task reach its ack decision and the next queued block
+        // reach its own park before the caller asserts.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    };
+}
+
+describe('StateHistoryConnection ack backpressure', () => {
+    let server: WebSocketServer;
+    let connection: StateHistoryConnection;
+
+    afterEach(async () => {
+        (connection as any).stopProcessing();
+        (connection as any).ws?.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    async function connectDriven(connectionOptions: IShipConnectionOptions): Promise<IDrivenConnection> {
+        const port = await listen(server);
+        const driven = driveConnection(port, { allow_empty_traces: true, ...connectionOptions });
+
+        connection = driven.connection;
+
+        (connection as any).stopped = false;
+        connection.connect();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        return driven;
+    }
+
+    // Four blocks arrive while the consumer is parked, so the running block's
+    // ack decision sees three queued behind it, the next sees two, then one.
+    async function feedFourBlocks(driven: IDrivenConnection): Promise<void> {
+        for (let i = 0; i < 4; i += 1) {
+            await driven.connection.onMessage(payloadlessBlockMessage(391178535 + i));
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    it('withholds the ack while the block queue sits at or above max_blocks_queue', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const acks = collectAcks(server);
+
+        const driven = await connectDriven({ min_block_confirmation: 1, max_blocks_queue: 2 });
+        const releaseOne = gateConsumer(driven);
+
+        await feedFourBlocks(driven);
+
+        // Both ack decisions run at a depth of at least two, the ceiling, so
+        // neither confirmation reaches the node.
+        await releaseOne();
+        await releaseOne();
+
+        expect(driven.consumed).to.have.length(3);
+        expect(connection.getQueueSize()).to.equal(1);
+        expect(acks).to.have.length(0);
+        expect((connection as any).unconfirmed).to.equal(2);
+    });
+
+    it('sends the accumulated count in one ack once the queue drains under the threshold', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const acks = collectAcks(server);
+
+        const driven = await connectDriven({ min_block_confirmation: 1, max_blocks_queue: 2 });
+        const releaseOne = gateConsumer(driven);
+
+        await feedFourBlocks(driven);
+
+        await releaseOne();
+        await releaseOne();
+
+        expect(acks).to.have.length(0);
+
+        // The third block acks at a depth of one, under the ceiling, so the two
+        // withheld confirmations go out with it as a single ack.
+        await releaseOne();
+
+        expect(acks.map((ack) => ack.numMessages)).to.deep.equal([3]);
+        expect((connection as any).unconfirmed).to.equal(0);
+    });
+
+    it('keeps the min_block_confirmation cadence when max_blocks_queue is 0', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const acks = collectAcks(server);
+
+        const driven = await connectDriven({ min_block_confirmation: 2, max_blocks_queue: 0 });
+        const releaseOne = gateConsumer(driven);
+
+        await feedFourBlocks(driven);
+
+        for (let i = 0; i < 4; i += 1) {
+            await releaseOne();
+        }
+
+        // The second block acks at a depth of two, which any non-zero ceiling of
+        // two or less would withhold. Zero applies no ceiling at all.
+        expect(acks.map((ack) => ack.numMessages)).to.deep.equal([2, 2]);
+        expect(connection.getQueueSize()).to.equal(0);
+    });
+
+    it('keeps the socket when backpressure holds the ack longer than idle_timeout_ms', async () => {
+        server = new WebSocketServer({ port: 0 });
+        const acks = collectAcks(server);
+
+        const idleTimeoutMs = 100;
+        const driven = await connectDriven({
+            min_block_confirmation: 1,
+            max_blocks_queue: 3,
+            heartbeat_interval_ms: 25,
+            idle_timeout_ms: idleTimeoutMs,
+        });
+
+        // Twelve blocks at 30ms each hold the queue above the ceiling for nine of
+        // them, so the client sends nothing for several times idle_timeout_ms.
+        (connection as any).consumer = {
+            consume: async (block: any) => {
+                driven.consumed.push(block);
+
+                await new Promise((resolve) => setTimeout(resolve, 30));
+            },
+        };
+
+        const startedAt = Date.now();
+
+        for (let i = 0; i < 12; i += 1) {
+            await connection.onMessage(payloadlessBlockMessage(391178535 + i));
+        }
+
+        await (connection as any).blocksQueue.onIdle();
+
+        expect(driven.consumed).to.have.length(12);
+        // The first ack only leaves once the queue drains under the ceiling,
+        // which is well past the window the idle watchdog tears down on.
+        expect(acks[0]?.receivedAt).to.be.greaterThanOrEqual(startedAt + idleTimeoutMs);
+        expect(driven.warnings.some((w) => w.includes('terminating dead connection'))).to.equal(false);
+        expect(driven.errors).to.deep.equal([]);
+        expect((connection as any).connected).to.equal(true);
+        expect((connection as any).reconnectTimer).to.equal(undefined);
     });
 });
