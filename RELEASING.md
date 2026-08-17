@@ -50,10 +50,13 @@ rendered GitHub Release, not at the npm publish.
     cd antelope-ship-utils
     pnpm install --frozen-lockfile
     pnpm run build
-    npm publish --access public
+    npm publish --access public --provenance=false
     ```
 
-    Every release after that goes through the workflow.
+    `--provenance=false` overrides `publishConfig.provenance` for that one
+    hand publish, because npm can attest provenance only from a supported CI
+    workflow. Every release after that goes through the workflow, with
+    provenance.
 
 6. Verify the published version and the rendered Release:
 
@@ -158,3 +161,27 @@ describes what the tag ships. It exits non-zero and names what is missing
 when no tag is given, when the tag is not v-prefixed, when the tag does not
 exist, when the CHANGELOG at that tag carries no entry for the version, and
 when no earlier `v*` tag exists.
+
+## Published package metadata
+
+A release publishes a package page as well as a Release, and the page reads
+`package.json`. It carries `name` and `version`; `description` (one sentence
+on what the package does and for whom); `license`, with the `LICENSE` file
+shipped; `homepage`; `repository` (an object with `type: git` and the
+`git+https` URL); `bugs` (an object with the issues URL); `author` (an object
+with `name` and `url`); `keywords`; `engines`; `main`, `types` and the
+`exports` map; `files` (the build output and the notices that must ship);
+`sideEffects`; and `publishConfig` with `access: public` and
+`provenance: true`, so a publish outside `publish.yml` either carries the
+same access and provenance or fails instead of publishing without them.
+The package ships CommonJS only, because the parallel deserializer loads
+its worker by a path relative to the compiled entry, so there is no
+`module` field.
+
+The README is the npm page: it opens with the package name, badges for the
+npm version, CI and license, a short introduction, and an install line.
+`npm pack --dry-run` lists what the tarball ships: `dist/` with its type
+declarations and source maps, `README.md`, `LICENSE`, `NOTICE`,
+`CHANGELOG.md` and `package.json`, and anything else is a `files` mistake.
+`src/packaging.test.ts` runs that check in CI, so the tarball is proven
+before the tag.

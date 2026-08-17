@@ -11,6 +11,10 @@
         "type": "git",
         "url": "git+https://github.com/atomicassets/antelope-ship-utils.git"
     },
+    "author": {
+        "name": "AtomicHub",
+        "url": "https://atomichub.io"
+    },
     "keywords": ["antelope", "eosio", "ship", "state-history", "atomicassets", "wax", "eosio-ship-utils"],
     "engines": {
         "node": ">=22"
@@ -27,8 +31,13 @@
         "./package.json": "./package.json"
     },
     "sideEffects": false,
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
     "scripts": {
         "build": "tsc -p tsconfig.json",
+        "pretest": "pnpm run build",
         "clean": "rm -rf dist",
         "check-types": "tsc --noEmit -p tsconfig.check.json",
         "lint": "eslint .",

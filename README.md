@@ -1,5 +1,9 @@
 # @atomichub/antelope-ship-utils
 
+[![npm version](https://img.shields.io/npm/v/@atomichub/antelope-ship-utils.svg)](https://www.npmjs.com/package/@atomichub/antelope-ship-utils)
+[![CI](https://github.com/atomicassets/antelope-ship-utils/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/atomicassets/antelope-ship-utils/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/@atomichub/antelope-ship-utils.svg)](https://github.com/atomicassets/antelope-ship-utils/blob/main/LICENSE)
+
 A State History Plugin (SHIP) client for Antelope chains. It opens a
 websocket to a node's SHIP endpoint, deserializes the blocks, traces, and
 deltas the node streams back, and drives a consumer over the result.
