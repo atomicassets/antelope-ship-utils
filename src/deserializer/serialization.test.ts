@@ -315,9 +315,9 @@ describe('serialization', () => {
 
             const result = extractShipTraces({ traces, block: dummyBlock });
             expect(result).to.have.length(1);
-            expect(result[0].trace.act.account).to.equal('atomicassets');
-            expect(result[0].trace.act.name).to.equal('transfer');
-            expect(result[0].tx.id).to.equal('tx1');
+            expect(result[0]!.trace.act.account).to.equal('atomicassets');
+            expect(result[0]!.trace.act.name).to.equal('transfer');
+            expect(result[0]!.tx.id).to.equal('tx1');
         });
 
         it('should skip transactions with non-zero status (failed)', () => {
@@ -362,8 +362,8 @@ describe('serialization', () => {
 
             const result = extractShipTraces({ traces, block: dummyBlock });
             expect(result).to.have.length(1);
-            expect(result[0].trace.act.account).to.equal('eosio.token');
-            expect(result[0].trace.global_sequence).to.equal('300');
+            expect(result[0]!.trace.act.account).to.equal('eosio.token');
+            expect(result[0]!.trace.global_sequence).to.equal('300');
         });
 
         it('should sort traces by global_sequence', () => {
@@ -390,8 +390,8 @@ describe('serialization', () => {
 
             const result = extractShipTraces({ traces, block: dummyBlock });
             expect(result).to.have.length(2);
-            expect(result[0].trace.global_sequence).to.equal('400');
-            expect(result[1].trace.global_sequence).to.equal('500');
+            expect(result[0]!.trace.global_sequence).to.equal('400');
+            expect(result[1]!.trace.global_sequence).to.equal('500');
         });
 
         it('should handle multiple transactions', () => {
@@ -421,8 +421,8 @@ describe('serialization', () => {
             const result = extractShipTraces({ traces, block: dummyBlock });
             expect(result).to.have.length(2);
             // Sorted by global_sequence across all transactions
-            expect(result[0].trace.global_sequence).to.equal('5');
-            expect(result[1].trace.global_sequence).to.equal('10');
+            expect(result[0]!.trace.global_sequence).to.equal('5');
+            expect(result[1]!.trace.global_sequence).to.equal('10');
         });
 
         it('should handle action_trace_v1 traces', () => {
@@ -480,7 +480,7 @@ describe('serialization', () => {
 
             const result = extractShipTraces({ traces: [trace], block: dummyBlock });
             expect(result).to.have.length(1);
-            expect(result[0].trace.act.name).to.equal('dosomething');
+            expect(result[0]!.trace.act.name).to.equal('dosomething');
         });
 
         it('should throw for unsupported transaction type', () => {
@@ -572,9 +572,9 @@ describe('serialization', () => {
             });
 
             expect(result).to.have.length(1);
-            expect(result[0].delta.code).to.equal('atomicassets');
-            expect(result[0].delta.table).to.equal('assets');
-            expect(result[0].delta.present).to.equal(true);
+            expect(result[0]!.delta.code).to.equal('atomicassets');
+            expect(result[0]!.delta.table).to.equal('assets');
+            expect(result[0]!.delta.present).to.equal(true);
         });
 
         it('should set present=false for removed rows', () => {
@@ -597,7 +597,7 @@ describe('serialization', () => {
             });
 
             expect(result).to.have.length(1);
-            expect(result[0].delta.present).to.equal(false);
+            expect(result[0]!.delta.present).to.equal(false);
         });
 
         it('should skip deltas not in serializedDeltas list', () => {
@@ -672,7 +672,7 @@ describe('serialization', () => {
             });
 
             expect(result).to.have.length(1);
-            expect(result[0].delta.code).to.equal('test');
+            expect(result[0]!.delta.code).to.equal('test');
         });
 
         it('should throw for unsupported delta type', () => {
@@ -742,8 +742,8 @@ describe('serialization', () => {
             });
 
             expect(result).to.have.length(2);
-            expect(result[0].delta.payer).to.equal('alice');
-            expect(result[1].delta.payer).to.equal('bob');
+            expect(result[0]!.delta.payer).to.equal('alice');
+            expect(result[1]!.delta.payer).to.equal('bob');
         });
     });
 });
