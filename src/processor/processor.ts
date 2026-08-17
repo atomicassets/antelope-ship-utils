@@ -547,7 +547,7 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                     return false;
                 }
 
-                // Bind to a const so the narrowed type survives across the closures below —
+                // Bind to a const so the narrowed type survives across the closures below;
                 // TS does not retain narrowing of a parameter's property access inside nested
                 // function bodies.
                 const abiData = deserializedTrace.data;
@@ -569,7 +569,7 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                 try {
                     return this.abiProvider.setAbi(trace.data.account, block.block_num, deserializeAbi(trace.data.abi));
                 } catch (e) {
-                    // Never crash on a malformed ABI — chains regularly publish garbage ABIs
+                    // Never crash on a malformed ABI: chains regularly publish garbage ABIs
                     // that can't be deserialized. Log and skip; the account will use its previous ABI.
                     this.emit('warn', `Error deserializing ABI ${trace.data.account} at block ${block.block_num}`, e);
                 }

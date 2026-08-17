@@ -207,7 +207,7 @@ describe('BlockProcessor ABI fallback', () => {
             const block = createBlock(8631733);
             const delta = createDelta('atomicassets', 'config');
 
-            // Should not throw — the fallback should succeed
+            // Should not throw: the fallback should succeed
             await processor.processBlock({ block, traces: [], deltas: [delta] });
 
             expect((abiProvider.getOlderAbis as sinon.SinonStub).calledOnce).to.be.true;
@@ -235,7 +235,7 @@ describe('BlockProcessor ABI fallback', () => {
             const block = createBlock(8631733);
             const delta = createDelta('atomicassets', 'config');
 
-            // Should NOT throw — should warn and skip
+            // Should NOT throw: should warn and skip
             await processor.processBlock({ block, traces: [], deltas: [delta] });
 
             expect(warnings).to.have.length(1);
@@ -331,7 +331,7 @@ describe('BlockProcessor ABI fallback', () => {
             const block = createBlock(100);
             const trace = createTrace('eosio.token', 'transfer');
 
-            // Should NOT throw — should warn and skip
+            // Should NOT throw: should warn and skip
             await processor.processBlock({ block, traces: [trace], deltas: [] });
 
             expect(warnings).to.have.length(1);
@@ -487,7 +487,7 @@ describe('BlockProcessor processABIUpdates', () => {
 
         const block = createBlock(100);
 
-        // Should not throw — malformed ABIs are caught and emitted as warnings
+        // Should not throw: malformed ABIs are caught and emitted as warnings
         await processor.processBlock({ block, traces: [createSetAbiTrace('atomicassets')], deltas: [] });
 
         expect(abiProvider.setAbi.called).to.be.false;
@@ -623,7 +623,7 @@ describe('BlockProcessor listener dispatch', () => {
         });
 
         const block = createBlock(100);
-        // Delta for a different table — no listener matches
+        // Delta for a different table: no listener matches
         const delta = createDelta('atomicassets', 'assets');
 
         await processor.processBlock({ block, traces: [], deltas: [delta] });

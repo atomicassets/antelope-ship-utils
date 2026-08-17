@@ -344,7 +344,7 @@ describe('serialization', () => {
                     {
                         account: 'eosio.token',
                         name: 'transfer',
-                        receiver: 'eosio.token', // primary — keep
+                        receiver: 'eosio.token', // primary: keep
                         global_sequence: '300',
                         action_ordinal: 1,
                         creator_action_ordinal: 0,
@@ -352,7 +352,7 @@ describe('serialization', () => {
                     {
                         account: 'eosio.token',
                         name: 'transfer',
-                        receiver: 'alice', // notification — discard
+                        receiver: 'alice', // notification: discard
                         global_sequence: '301',
                         action_ordinal: 2,
                         creator_action_ordinal: 1,
