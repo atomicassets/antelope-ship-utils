@@ -1,4 +1,4 @@
-# Releasing @atomichub/eosio-ship-utils
+# Releasing @atomichub/antelope-ship-utils
 
 How a version of this package reaches npm and GitHub. A release ends at a
 rendered GitHub Release, not at the npm publish.
@@ -46,8 +46,8 @@ rendered GitHub Release, not at the npm publish.
     checkout of the tag:
 
     ```sh
-    git clone --branch v1.0.0 https://github.com/atomicassets/eosio-ship-utils.git
-    cd eosio-ship-utils
+    git clone --branch v1.0.0 https://github.com/atomicassets/antelope-ship-utils.git
+    cd antelope-ship-utils
     pnpm install --frozen-lockfile
     pnpm run build
     npm publish --access public
@@ -58,7 +58,7 @@ rendered GitHub Release, not at the npm publish.
 6. Verify the published version and the rendered Release:
 
     ```sh
-    npm view @atomichub/eosio-ship-utils version
+    npm view @atomichub/antelope-ship-utils version
     gh release view vX.Y.Z
     ```
 
@@ -104,7 +104,7 @@ a section with no items is left out.
 
 - <short sha> <subject>
 
-Full changelog: https://github.com/atomicassets/eosio-ship-utils/compare/<PREV>...<TAG>
+Full changelog: https://github.com/atomicassets/antelope-ship-utils/compare/<PREV>...<TAG>
 ```
 
 The section order is breaking changes, upgrading, features, bug fixes,

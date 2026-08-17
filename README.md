@@ -1,4 +1,4 @@
-# @atomichub/eosio-ship-utils
+# @atomichub/antelope-ship-utils
 
 A State History Plugin (SHIP) client for Antelope chains. It opens a
 websocket to a node's SHIP endpoint, deserializes the blocks, traces, and
@@ -17,7 +17,7 @@ Antelope RPC endpoint.
 ## Install
 
 ```sh
-pnpm add @atomichub/eosio-ship-utils
+pnpm add @atomichub/antelope-ship-utils
 ```
 
 ## Usage
@@ -34,7 +34,7 @@ import {
     EOSJsDeserializer,
     LocalAbiProvider,
     LocalBlockRepository,
-} from '@atomichub/eosio-ship-utils';
+} from '@atomichub/antelope-ship-utils';
 
 const deserializer = new EOSJsDeserializer({ threads: 4 });
 
@@ -103,8 +103,9 @@ consumer that wants to keep running past an error needs to call
 ## Lineage
 
 This package reworks [eosio-ship-utils](https://www.npmjs.com/package/eosio-ship-utils)
-on npm, which is unmaintained. See `NOTICE` for the attribution. Use this
-package instead for SHIP clients on Antelope chains.
+on npm, which is unmaintained, and carries the protocol's current name,
+Antelope, in place of the EOSIO name the predecessor used. See `NOTICE` for
+the attribution. Use this package instead for SHIP clients on Antelope chains.
 
 ## Development
 

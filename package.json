@@ -1,17 +1,17 @@
 {
-    "name": "@atomichub/eosio-ship-utils",
+    "name": "@atomichub/antelope-ship-utils",
     "version": "1.0.0",
     "description": "State History Plugin (SHIP) client for Antelope chains: connect, deserialize, and consume blocks, traces, and deltas",
     "license": "MIT",
-    "homepage": "https://github.com/atomicassets/eosio-ship-utils#readme",
+    "homepage": "https://github.com/atomicassets/antelope-ship-utils#readme",
     "bugs": {
-        "url": "https://github.com/atomicassets/eosio-ship-utils/issues"
+        "url": "https://github.com/atomicassets/antelope-ship-utils/issues"
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/atomicassets/eosio-ship-utils.git"
+        "url": "git+https://github.com/atomicassets/antelope-ship-utils.git"
     },
-    "keywords": ["antelope", "eosio", "ship", "state-history", "atomicassets", "wax"],
+    "keywords": ["antelope", "eosio", "ship", "state-history", "atomicassets", "wax", "eosio-ship-utils"],
     "engines": {
         "node": ">=22"
     },
