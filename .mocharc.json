@@ -1,0 +1,10 @@
+{
+    "ui": "bdd",
+    "require": ["@swc-node/register"],
+    "extensions": ["ts"],
+    "timeout": 10000,
+    "color": true,
+    "reporter": "spec",
+    "recursive": true,
+    "exit": true
+}

@@ -1,0 +1,4 @@
+This package descends from eosio-ship-utils, originally written by pink.gg
+Solutions GmbH and published on npm as eosio-ship-utils. This repository
+reworks that code, including a port from eosjs to @wharfkit/antelope and
+connection hardening for reconnects, heartbeats, and error handling.

@@ -1,10 +1,37 @@
 {
-    "extends": ["@atomichub/tsconfig/package-lib.json", "@atomichub/tsconfig/strict.json"],
+    "$schema": "https://json.schemastore.org/tsconfig",
     "compilerOptions": {
+        "target": "ES2024",
+        "lib": ["ES2024"],
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "sourceMap": true,
+        "removeComments": false,
+        "importHelpers": false,
+        "newLine": "lf",
+        "forceConsistentCasingInFileNames": true,
+        "skipLibCheck": true,
+        "skipDefaultLibCheck": true,
+        "allowUnreachableCode": false,
+        "allowUnusedLabels": false,
+        "exactOptionalPropertyTypes": false,
+        "incremental": false,
         "outDir": "./dist",
         "rootDir": "./src",
-        "types": ["node", "mocha"]
+        "declaration": true,
+        "declarationMap": true,
+        "composite": false
     },
     "include": ["src/**/*"],
-    "exclude": ["node_modules", "dist", "build", "**/*.test.ts", "**/*.spec.ts"]
+    "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

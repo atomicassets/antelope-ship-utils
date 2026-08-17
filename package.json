@@ -1,25 +1,41 @@
 {
     "name": "@atomichub/eosio-ship-utils",
     "version": "1.0.0",
-    "private": true,
-    "description": "EOSIO State History Plugin (SHIP) utilities",
+    "description": "State History Plugin (SHIP) client for Antelope chains: connect, deserialize, and consume blocks, traces, and deltas",
+    "license": "MIT",
+    "homepage": "https://github.com/atomicassets/eosio-ship-utils#readme",
+    "bugs": {
+        "url": "https://github.com/atomicassets/eosio-ship-utils/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/atomicassets/eosio-ship-utils.git"
+    },
+    "keywords": ["antelope", "eosio", "ship", "state-history", "atomicassets", "wax"],
+    "engines": {
+        "node": ">=22"
+    },
+    "packageManager": "pnpm@11.13.1",
+    "files": ["dist/", "NOTICE", "CHANGELOG.md"],
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
         ".": {
             "types": "./dist/index.d.ts",
-            "swc-node": "./src/index.ts",
-            "require": "./dist/index.js"
-        }
+            "default": "./dist/index.js"
+        },
+        "./package.json": "./package.json"
     },
+    "sideEffects": false,
     "scripts": {
-        "build": "tsc",
-        "check-types": "tsc-native --noEmit",
-        "dev": "tsc --watch",
+        "build": "tsc -p tsconfig.json",
         "clean": "rm -rf dist",
-        "lint": "eslint 'src/**/*.ts'",
-        "test": "mocha --require @swc-node/register 'src/**/*.test.ts'",
-        "test:coverage": "c8 mocha --require @swc-node/register 'src/**/*.test.ts'"
+        "check-types": "tsc --noEmit -p tsconfig.check.json",
+        "lint": "eslint .",
+        "test": "mocha 'src/**/*.test.ts'",
+        "test:coverage": "c8 mocha 'src/**/*.test.ts'",
+        "knip": "knip",
+        "prepack": "pnpm run clean && pnpm run build"
     },
     "dependencies": {
         "common-tags": "^1.8.2",
@@ -29,11 +45,24 @@
         "ws": "^8.20.1"
     },
     "devDependencies": {
-        "@atomichub/tsconfig": "workspace:*",
         "@types/common-tags": "^1.8.4",
         "@types/node": "^22",
         "@types/ws": "^8.5.10",
+        "@swc-node/register": "^1.11.1",
+        "mocha": "^11.7.5",
+        "@types/mocha": "^10.0.10",
+        "chai": "^6.2.2",
+        "@types/chai": "^5.2.3",
+        "sinon": "^21.0.1",
+        "@types/sinon": "^21.0.0",
+        "c8": "11.0.0",
         "typescript": "^6.0.0",
-        "@atomichub/tsc-native": "workspace:*"
+        "eslint": "^9.39.2",
+        "@eslint/js": "^9.39.2",
+        "typescript-eslint": "^8.59.0",
+        "eslint-config-prettier": "^10.1.8",
+        "globals": "^17.0.0",
+        "prettier": "^3.8.0",
+        "knip": "^5.88.1"
     }
 }
