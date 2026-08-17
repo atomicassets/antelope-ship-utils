@@ -27,3 +27,4 @@ Initial standalone release, reworked from eosio-ship-utils 0.0.16 (see NOTICE).
 ### Other changes
 
 - Adopts strict TypeScript types throughout.
+- Opens the SHIP socket with permessage-deflate disabled, so a node that offers compression never gets it negotiated on frames that are already dense binary.

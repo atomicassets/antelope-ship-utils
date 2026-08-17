@@ -115,7 +115,10 @@ export class StateHistoryConnection extends EventEmitter {
 
             this.connecting = true;
 
+            // SHIP frames are large binary payloads, and the ws client default would
+            // negotiate compression with any server offering it, at a CPU cost per frame.
             this.ws = new WebSocket(this.endpoint, {
+                perMessageDeflate: false,
                 maxPayload: 16 * 1024 * 1024 * 1024,
             });
 

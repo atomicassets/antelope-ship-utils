@@ -974,3 +974,45 @@ describe('StateHistoryConnection get_blocks_result_v2', () => {
         ).to.equal(true);
     });
 });
+
+describe('StateHistoryConnection websocket options', () => {
+    let server: WebSocketServer;
+    let connection: StateHistoryConnection;
+
+    afterEach(async () => {
+        (connection as any).stopProcessing();
+        (connection as any).ws?.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    it('offers no permessage-deflate to a node that would accept it', async () => {
+        // The server advertises the extension, so whether it ends up negotiated
+        // is decided by the client's offer alone. Asserting the handshake this
+        // way keeps the proposition on observable behavior; the ws constructor
+        // is reached through a module import the suite has no way to spy on.
+        server = new WebSocketServer({ port: 0, perMessageDeflate: true });
+
+        let offeredExtensions: string | undefined;
+        let negotiatedExtensions: string | undefined;
+
+        server.on('connection', (ws, request) => {
+            offeredExtensions = request.headers['sec-websocket-extensions'];
+            negotiatedExtensions = ws.extensions;
+        });
+
+        const port = await listen(server);
+
+        connection = new StateHistoryConnection({ endpoint: `ws://127.0.0.1:${port}` });
+
+        connection.on('error', () => undefined);
+        connection.on('info', () => undefined);
+
+        (connection as any).stopped = false;
+        connection.connect();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect((connection as any).connected).to.equal(true);
+        expect(offeredExtensions).to.equal(undefined);
+        expect(negotiatedExtensions).to.equal('');
+    });
+});
