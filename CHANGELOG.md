@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.1]
+
+### Bug fixes
+
+- Logs the block request with the have_positions count in place of the array. The array holds one 64-character block id per tracked reversible block, so a mainnet consumer wrote tens of kilobytes at info on every connect and reconnect. (#1)
+
 ## [1.0.0]
 
 Initial standalone release, reworked from eosio-ship-utils 0.0.16 (see NOTICE).

@@ -599,7 +599,16 @@ export class StateHistoryConnection extends EventEmitter {
     requestBlocks(): void {
         this.unconfirmed = 0;
 
-        this.emit('info', `Requesting ship blocks ${JSON.stringify(this.shipOptions)}`);
+        // have_positions carries one entry per reversible block the consumer
+        // still tracks, each with a 64-character id, so the request is logged
+        // with the count in its place rather than the array.
+        this.emit(
+            'info',
+            `Requesting ship blocks ${JSON.stringify({
+                ...this.shipOptions,
+                have_positions: `${this.shipOptions.have_positions.length} positions`,
+            })}`
+        );
 
         this.send(['get_blocks_request_v0', this.shipOptions]);
     }
