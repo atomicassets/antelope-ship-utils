@@ -1016,3 +1016,40 @@ describe('StateHistoryConnection websocket options', () => {
         expect(negotiatedExtensions).to.equal('');
     });
 });
+
+describe('StateHistoryConnection request log', () => {
+    it('logs the block request with the have_positions count instead of the array', () => {
+        const connection = new StateHistoryConnection({
+            endpoint: 'ws://127.0.0.1:1',
+            deserializer: { init: async () => undefined, deserialize: async () => [], terminate: async () => undefined } as any,
+        });
+        const infos: string[] = [];
+        connection.on('info', (msg: string) => infos.push(msg));
+        connection.on('error', () => undefined);
+
+        // The stub ABI carries no get_blocks_request_v0 variant, and the wire
+        // encoding is not what this test proves, so send() is stubbed out.
+        (connection as any).send = () => undefined;
+        (connection as any).shipOptions = {
+            start_block_num: 999,
+            end_block_num: 0xffffffff,
+            max_messages_in_flight: 30,
+            have_positions: [
+                { block_num: 997, block_id: 'a'.repeat(64) },
+                { block_num: 998, block_id: 'b'.repeat(64) },
+            ],
+            irreversible_only: false,
+            fetch_block: false,
+            fetch_traces: true,
+            fetch_deltas: false,
+        };
+
+        connection.requestBlocks();
+
+        const line = infos.find((msg) => msg.startsWith('Requesting ship blocks'));
+        expect(line).to.be.a('string');
+        expect(line).to.contain('"have_positions":"2 positions"');
+        expect(line).to.not.contain('a'.repeat(64));
+        expect(line).to.contain('"start_block_num":999');
+    });
+});
