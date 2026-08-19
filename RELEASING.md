@@ -20,7 +20,9 @@ rendered GitHub Release, not at the npm publish.
     git tag vX.Y.Z && git push origin vX.Y.Z
     ```
 
-    `.github/workflows/publish.yml` starts and waits on the `npm-publish`
+    `.github/workflows/publish.yml` starts; its build job runs the release
+    gates (tag matches version, tag on main), the install, the tests, and
+    packs the tarball; its publish job waits on the `npm-publish`
     environment. The tag is the release: consumers pin or float on it, so
     push it only once the entry and the code behind it are ready.
 
@@ -36,27 +38,11 @@ rendered GitHub Release, not at the npm publish.
     so the script refuses it; write that body by hand as the summary plus
     `Initial release.` instead.
 
-5. Approve the `npm-publish` environment for the tag. With more than one
-   release waiting, approve in ascending version order, so the npm `latest`
-   tag stays monotonic.
-
-    The first publish of 1.0.0 is the one exception: npm's trusted publisher
-    needs a package that already exists on the registry before it accepts a
-    workflow's OIDC token, so that publish is done by hand from a clean
-    checkout of the tag:
-
-    ```sh
-    git clone --branch v1.0.0 https://github.com/atomicassets/antelope-ship-utils.git
-    cd antelope-ship-utils
-    pnpm install --frozen-lockfile
-    pnpm run build
-    npm publish --access public --provenance=false
-    ```
-
-    `--provenance=false` overrides `publishConfig.provenance` for that one
-    hand publish, because npm can attest provenance only from a supported CI
-    workflow. Every release after that goes through the workflow, with
-    provenance.
+5. Approve the `npm-publish` environment for the tag once the run is green
+   through the build gates, the tag-on-main check included, which proves
+   the tagged commit sits on `main`. With more than one release waiting,
+   approve in ascending version order, so the npm `latest` tag stays
+   monotonic.
 
 6. Verify the published version and the rendered Release:
 
@@ -64,6 +50,21 @@ rendered GitHub Release, not at the npm publish.
     npm view @atomichub/antelope-ship-utils version
     gh release view vX.Y.Z
     ```
+
+## Publish auth
+
+The publish job authenticates through npm trusted publishing (OIDC). It holds
+no npm token and sets no registry URL on the setup step, so nothing writes an
+`.npmrc` auth entry and npm 11.5.1 or later exchanges the job's OIDC identity
+for a short-lived credential of its own. The `npm-publish` environment is the
+gate on that identity: the build job runs immediately on the pushed tag, and
+the publish job waits until a maintainer approves it.
+
+`publishConfig.provenance` in `package.json` makes a default local npm publish
+fail, because no OIDC identity is available outside CI to satisfy it. It is
+data inside the manifest being published, not an access control. The durable
+control is the npm-side package setting that requires trusted publishing,
+which closes the classic-token path that no workflow change can reach.
 
 ## Body template
 
