@@ -11,6 +11,7 @@ import {
     getActionAbiType,
     deserializeAbi,
 } from './serialization';
+import { objectifyNumericFloats } from './objectify';
 
 // Minimal ABI with a struct, table, and action for testing
 const testAbiDef = {
@@ -42,6 +43,37 @@ const testAbiDef = {
                 { name: 'active', type: 'bool' },
             ],
         },
+        {
+            name: 'attributes',
+            base: '',
+            fields: [
+                { name: 'wear', type: 'float32' },
+                { name: 'weight', type: 'float64' },
+                { name: 'quad', type: 'float128' },
+                { name: 'wears', type: 'float32[]' },
+                { name: 'serial', type: 'uint64' },
+                { name: 'supply', type: 'uint64' },
+                { name: 'attribute', type: 'atomic_value' },
+            ],
+        },
+        {
+            name: 'holding',
+            base: '',
+            fields: [
+                { name: 'owner', type: 'name' },
+                { name: 'price', type: 'asset' },
+                { name: 'weight', type: 'float64' },
+                { name: 'wears', type: 'float32[]' },
+            ],
+        },
+        {
+            name: 'listing',
+            base: '',
+            fields: [
+                { name: 'id', type: 'uint64' },
+                { name: 'holding', type: 'holding' },
+            ],
+        },
     ],
     actions: [
         { name: 'transfer', type: 'transfer', ricardian_contract: '' },
@@ -53,10 +85,51 @@ const testAbiDef = {
     ricardian_clauses: [],
     error_messages: [],
     abi_extensions: [],
-    variants: [],
+    variants: [{ name: 'atomic_value', types: ['int8', 'float32', 'string'] }],
 };
 
 const testAbi = ABI.from(testAbiDef);
+
+// A float128 holds raw bytes rather than a number, so the fixture is the 16-byte
+// hex form Float128 round-trips.
+const QUAD_HEX = '0x00000000000000000000000000000080';
+
+const encodeAttributes = (fields: Record<string, unknown>) => {
+    const object = {
+        wear: 0,
+        weight: 0,
+        quad: QUAD_HEX,
+        wears: [],
+        serial: 0,
+        supply: 0,
+        attribute: ['string', ''],
+        ...fields,
+    };
+
+    return Serializer.encode({ object, type: 'attributes', abi: testAbi }).array;
+};
+
+// Proves the walk left no wharfkit instance behind: every node is a primitive,
+// a plain object, or a plain array.
+const assertPlainJson = (value: any, path: string) => {
+    if (value === null) {
+        return;
+    }
+
+    const kind = typeof value;
+    if (kind === 'boolean' || kind === 'number' || kind === 'string') {
+        return;
+    }
+
+    expect(kind, `${path} is neither a primitive nor an object`).to.equal('object');
+
+    const proto = Object.getPrototypeOf(value);
+    expect(proto === Object.prototype || proto === Array.prototype, `${path} is a class instance`).to.equal(true);
+
+    for (const key of Object.keys(value)) {
+        assertPlainJson(value[key], `${path}.${key}`);
+    }
+};
 
 describe('serialization', () => {
     describe('convertEosioTimestampToDate', () => {
@@ -95,6 +168,22 @@ describe('serialization', () => {
             expect(result.memo).to.equal('test payment');
         });
 
+        it('should deserialize an asset whose units exceed 53 bits', () => {
+            // Asset exposes `value` as a getter that throws above 53 bits, so a
+            // float check that reads `value` before the ABI name turns a large
+            // transfer into a decode failure.
+            const transferData = {
+                from: 'alice',
+                to: 'bob',
+                quantity: '100000000.00000000 WAX',
+                memo: 'whale',
+            };
+            const encoded = Serializer.encode({ object: transferData, type: 'transfer', abi: testAbi });
+
+            const result = deserializeEosioType('transfer', encoded.array, testAbi);
+            expect(result.quantity).to.equal('100000000.00000000 WAX');
+        });
+
         it('should accept hex string input', () => {
             const pairData = { id: 42, active: true };
             const encoded = Serializer.encode({ object: pairData, type: 'pair', abi: testAbi });
@@ -127,6 +216,121 @@ describe('serialization', () => {
             expect(typeof result.from).to.equal('string');
             expect(typeof result.to).to.equal('string');
             expect(typeof result.memo).to.equal('string');
+        });
+    });
+
+    describe('deserializeEosioType float attributes', () => {
+        it('should decode a float64 field to a JavaScript number', () => {
+            const result = deserializeEosioType('attributes', encodeAttributes({ weight: 92.13924923 }), testAbi);
+
+            expect(result.weight).to.equal(92.13924923);
+        });
+
+        it('should decode a float32 field to the float32 value widened to a double', () => {
+            // The string form keeps seven decimal places, so it rounds away the
+            // first value to 0.0001235 and loses the attribute.
+            const small = deserializeEosioType('attributes', encodeAttributes({ wear: 0.00012345678 }), testAbi);
+            expect(small.wear).to.equal(0.0001234567753272131);
+
+            const wear = deserializeEosioType('attributes', encodeAttributes({ wear: 0.6197762 }), testAbi);
+            expect(wear.wear).to.equal(0.61977618932724);
+        });
+
+        it('should decode a float32[] field to an array of numbers', () => {
+            const encoded = encodeAttributes({ wears: [0.6197762, 0.5, 1.5] });
+            const result = deserializeEosioType('attributes', encoded, testAbi);
+
+            expect(result.wears).to.deep.equal([0.61977618932724, 0.5, 1.5]);
+        });
+
+        it('should keep a float128 field as its hex string', () => {
+            const result = deserializeEosioType('attributes', encodeAttributes({}), testAbi);
+
+            expect(result.quad).to.equal(QUAD_HEX);
+        });
+
+        it('should decode a variant whose alternative is float32 to a name and a number', () => {
+            const encoded = encodeAttributes({ attribute: ['float32', 0.6197762] });
+            const result = deserializeEosioType('attributes', encoded, testAbi);
+
+            expect(result.attribute).to.deep.equal(['float32', 0.61977618932724]);
+        });
+
+        it('should keep uint64 fields in the shape the string-emitting decoder produced', () => {
+            const encoded = encodeAttributes({ serial: 42, supply: '18446744073709551615' });
+            const result = deserializeEosioType('attributes', encoded, testAbi);
+
+            expect(result.serial).to.equal(42);
+            expect(result.supply).to.equal('18446744073709551615');
+
+            const decoded = Serializer.decode({ data: encoded, type: 'attributes', abi: testAbi });
+            const objectified: any = Serializer.objectify(decoded);
+            expect(result.serial).to.equal(objectified.serial);
+            expect(result.supply).to.equal(objectified.supply);
+        });
+    });
+
+    describe('objectifyNumericFloats', () => {
+        it('should leave no wharfkit instance in a nested struct', () => {
+            const object = {
+                id: 7,
+                holding: {
+                    owner: 'alice',
+                    price: '1.00000000 WAX',
+                    weight: 92.13924923,
+                    wears: [0.6197762, 0.5],
+                },
+            };
+            const encoded = Serializer.encode({ object, type: 'listing', abi: testAbi });
+            const decoded = Serializer.decode({ data: encoded.array, type: 'listing', abi: testAbi });
+
+            const result = objectifyNumericFloats(decoded);
+
+            expect(result).to.deep.equal({
+                id: 7,
+                holding: {
+                    owner: 'alice',
+                    price: '1.00000000 WAX',
+                    weight: 92.13924923,
+                    wears: [0.61977618932724, 0.5],
+                },
+            });
+            assertPlainJson(result, 'listing');
+        });
+
+        it('should recognise a float wrapper from a second copy of @wharfkit/antelope', () => {
+            // A consumer can resolve two copies of the package, so the wrapper is
+            // matched on the ABI name its class carries rather than with instanceof.
+            class ForeignFloat32 {
+                static abiName = 'float32';
+                value = 0.5;
+                toJSON(): string {
+                    return this.value.toFixed(7);
+                }
+            }
+            const foreignWrapper = new ForeignFloat32();
+
+            expect(objectifyNumericFloats(foreignWrapper)).to.equal(0.5);
+            expect(objectifyNumericFloats({ wear: foreignWrapper })).to.deep.equal({ wear: 0.5 });
+        });
+
+        it('should keep a struct whose own fields imitate a float wrapper', () => {
+            // An ABI field name is any string, so a decoded struct can carry
+            // `constructor` and `value` fields. The prototype is what decides.
+            const impostor = { value: 7, constructor: { abiName: 'float32' } };
+
+            expect(objectifyNumericFloats(impostor)).to.deep.equal({
+                value: 7,
+                constructor: { abiName: 'float32' },
+            });
+        });
+
+        it('should pass a null-prototype object through without throwing', () => {
+            const bare = Object.create(null);
+            bare.value = 0.5;
+            bare.label = 'wear';
+
+            expect(objectifyNumericFloats(bare)).to.deep.equal({ value: 0.5, label: 'wear' });
         });
     });
 
