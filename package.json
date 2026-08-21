@@ -1,6 +1,6 @@
 {
     "name": "@atomichub/antelope-ship-utils",
-    "version": "1.0.1",
+    "version": "2.0.0",
     "description": "State History Plugin (SHIP) client for Antelope chains: connect, deserialize, and consume blocks, traces, and deltas",
     "license": "MIT",
     "homepage": "https://github.com/atomicassets/antelope-ship-utils#readme",
