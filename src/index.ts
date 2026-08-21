@@ -6,6 +6,7 @@ import { BlockProcessor } from './processor/processor';
 import { StateHistoryConnection } from './ship';
 import { LocalAbiProvider } from './abi/local';
 import { LocalBlockRepository } from './consumer/repositories/local';
+import { objectifyNumericFloats } from './deserializer/objectify';
 
 export {
     ShipConsumer,
@@ -16,6 +17,7 @@ export {
     StateHistoryConnection,
     LocalAbiProvider,
     LocalBlockRepository,
+    objectifyNumericFloats,
 };
 
 export type { IConsumerSettings } from './consumer/consumer';

@@ -79,6 +79,16 @@ connection.on('error', (err) => {
 await connection.startProcessing(consumer);
 ```
 
+ABI `float32` and `float64` fields decode to JavaScript numbers rather than
+to the strings `@wharfkit/antelope` renders for them.
+`deserializeEosioType` runs its result through `objectifyNumericFloats`,
+which the package also exports for a consumer that objectifies a decoded
+value itself. The walk matches `Serializer.objectify` everywhere else, and a
+`float32` comes back as the stored 32-bit value widened to a double, so
+`0.6197762` reads as `0.61977618932724`. A `float128` keeps its hex string,
+and the 64-bit integers keep the shape `Serializer.objectify` gives them, a decimal
+string above the 32-bit range and a number at or below it.
+
 ## IShipConnectionOptions
 
 Passed as `connectionOptions` to `StateHistoryConnection`. Every field is

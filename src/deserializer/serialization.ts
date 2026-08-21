@@ -1,5 +1,6 @@
 import { ABI, Serializer } from '@wharfkit/antelope';
 
+import { objectifyNumericFloats } from './objectify';
 import {
     IExtractedShipDelta,
     IExtractedShipTrace,
@@ -28,7 +29,7 @@ export function deserializeEosioType(
 
     const result = Serializer.decode({ data: dataArray, type, abi });
 
-    return Serializer.objectify(result);
+    return objectifyNumericFloats(result);
 }
 
 export function serializeEosioType(type: string, value: any, abi: ABI): Uint8Array {
