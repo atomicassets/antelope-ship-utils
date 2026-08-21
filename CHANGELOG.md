@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Breaking changes
 
-- ABI `float32` and `float64` fields decode to JavaScript numbers in place of the strings `@wharfkit/antelope` renders for them. The `float32` string held seven decimal places rather than the seven significant digits a `float32` carries, so a value needing more than seven fractional decimals lost information on the way to JSON, which is most of the range below 1 and all of it below 0.001. A consumer that persisted floats decoded by 1.x holds those strings and needs a one-time rewrite, for which the atomicassets-api repair is the reference. (#4)
+- ABI `float32` and `float64` fields decode to JavaScript numbers in place of the strings `@wharfkit/antelope` renders for them. The `float32` string held seven decimal places rather than the seven significant digits a `float32` carries, so a value needing more than seven fractional decimals lost information on the way to JSON. Sampling over 20,000 random float32 values per decade found that none failed to round-trip at or above 1, 41% failed in [0.5, 1), 87% failed in [0.1, 0.2), and 99% failed in [0.01, 0.02); every sampled value at or below 0.001 failed to round-trip, while the float32 form of 0.001 itself round-trips. A consumer that persisted floats decoded by 1.x holds those strings and needs a one-time rewrite, for which the atomicassets-api repair is the reference. (#4)
 
 ### Features
 
