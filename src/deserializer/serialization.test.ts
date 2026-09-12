@@ -184,6 +184,29 @@ describe('serialization', () => {
             expect(result.quantity).to.equal('100000000.00000000 WAX');
         });
 
+        it('should throw on invalid UTF-8 in a string field by default and decode it on request', () => {
+            const encoded = Serializer.encode({
+                object: { from: 'alice', to: 'bob', quantity: '1.00000000 WAX', memo: 'ab' },
+                type: 'transfer',
+                abi: testAbi,
+            }).array;
+            // The memo is the last field: a one-byte length prefix and two bytes
+            // that no UTF-8 sequence allows.
+            const invalid = Uint8Array.from(encoded);
+            invalid[invalid.length - 2] = 0xff;
+            invalid[invalid.length - 1] = 0xfe;
+
+            expect(() => deserializeEosioType('transfer', invalid, testAbi)).to.throw();
+
+            const result = deserializeEosioType('transfer', invalid, testAbi, { ignoreInvalidUTF8: true });
+            expect(result.from).to.equal('alice');
+            expect(result.memo).to.be.a('string');
+            expect(result.memo).to.have.length(2);
+
+            // The legacy boolean fourth argument still compiles and still throws.
+            expect(() => deserializeEosioType('transfer', invalid, testAbi, true)).to.throw();
+        });
+
         it('should accept hex string input', () => {
             const pairData = { id: 42, active: true };
             const encoded = Serializer.encode({ object: pairData, type: 'pair', abi: testAbi });

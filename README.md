@@ -89,6 +89,20 @@ value itself. The walk matches `Serializer.objectify` everywhere else, and a
 and the 64-bit integers keep the shape `Serializer.objectify` gives them, a decimal
 string above the 32-bit range and a number at or below it.
 
+The serialization helpers behind `BlockProcessor` are exported for a
+consumer that runs its own processing loop: `extractShipTraces` and
+`extractShipDeltas` turn a SHIP payload into flat traces and rows
+(`extractShipDeltas` returns only the delta names listed in its
+`serializedDeltas` argument, so pass `['contract_row']` for contract
+rows; the default list is empty and yields no rows),
+`getActionAbiType` and `getTableAbiType` resolve a struct name from an
+ABI, `deserializeEosioType` and `serializeEosioType` decode and encode a
+value against it, and `deserializeAbi` decodes the bytes an
+`eosio::setabi` action publishes. `deserializeEosioType` takes an
+`ignoreInvalidUTF8` option as its fourth argument for a string field that
+carries bytes no UTF-8 sequence allows; the default throws, as
+`@wharfkit/antelope` does.
+
 ## IShipConnectionOptions
 
 Passed as `connectionOptions` to `StateHistoryConnection`. Every field is

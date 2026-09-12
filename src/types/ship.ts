@@ -130,7 +130,7 @@ export type ShipTransactionTrace = [
 ];
 
 export type ShipActionTrace<T = Uint8Array> = [
-    'action_trace_v0',
+    'action_trace_v0' | 'action_trace_v1',
     {
         action_ordinal: number;
         creator_action_ordinal: number;
@@ -148,6 +148,8 @@ export type ShipActionTrace<T = Uint8Array> = [
         account_ram_deltas: Array<{ account: string; delta: number }>;
         except: any | null;
         error_code: any | null;
+        // action_trace_v1 adds the action's return value; v0 carries no such field.
+        return_value?: T;
     }
 ];
 
@@ -180,7 +182,7 @@ export type ShipPartialTransaction = [
 ];
 
 export type ShipTableDelta<T = Uint8Array> = [
-    'table_delta_v0',
+    'table_delta_v0' | 'table_delta_v1',
     {
         name: string;
         rows: Array<{ present: boolean; data: [string, EosioContractRow<T>] }>;
