@@ -219,6 +219,40 @@ describe('serialization', () => {
         });
     });
 
+    describe('deserializeAbi', () => {
+        const setAbiAbi = ABI.from({
+            version: 'eosio::abi/1.1',
+            structs: [
+                { name: 'setabi', base: '', fields: [{ name: 'account', type: 'name' }, { name: 'abi', type: 'bytes' }] },
+            ],
+            tables: [],
+            actions: [{ name: 'setabi', type: 'setabi', ricardian_contract: '' }],
+        });
+
+        it('should decode the hex string a deserialized setabi payload carries', () => {
+            const serializedAbi = Serializer.encode({ object: testAbi, type: ABI }).array;
+            const encoded = Serializer.encode({
+                object: { account: 'atomicassets', abi: serializedAbi },
+                type: 'setabi',
+                abi: setAbiAbi,
+            });
+
+            const payload = deserializeEosioType('setabi', encoded.array, setAbiAbi);
+            expect(payload.account).to.equal('atomicassets');
+            expect(payload.abi).to.be.a('string');
+
+            const abi = deserializeAbi(payload.abi);
+            expect(abi).to.be.instanceOf(ABI);
+            expect(abi.actions.map((a) => String(a.name))).to.deep.equal(testAbi.actions.map((a) => String(a.name)));
+        });
+
+        it('should decode raw bytes', () => {
+            const serializedAbi = Serializer.encode({ object: testAbi, type: ABI }).array;
+            const abi = deserializeAbi(serializedAbi);
+            expect(abi.version).to.equal(testAbi.version);
+        });
+    });
+
     describe('deserializeEosioType float attributes', () => {
         it('should decode a float64 field to a JavaScript number', () => {
             const result = deserializeEosioType('attributes', encodeAttributes({ weight: 92.13924923 }), testAbi);

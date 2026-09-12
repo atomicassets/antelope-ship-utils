@@ -155,6 +155,10 @@ export function getActionAbiType(abi: ABI, contract: string, action: string): st
     throw new Error(`Type for action not found ${contract}:${action}`);
 }
 
-export function deserializeAbi(serializedAbi: Uint8Array): ABI {
+/**
+ * Decodes a serialized ABI as published by `eosio::setabi`. The payload arrives either as
+ * the raw bytes or as the hex string that `deserializeEosioType` renders a `bytes` field to.
+ */
+export function deserializeAbi(serializedAbi: Uint8Array | string): ABI {
     return Serializer.decode({ data: serializedAbi, type: ABI }) as ABI;
 }

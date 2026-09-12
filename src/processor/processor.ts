@@ -542,7 +542,7 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         const neededAbis = deserializedAbiTraces.filter(
             (
                 deserializedTrace
-            ): deserializedTrace is { success: boolean; data: { account: string; abi: Uint8Array }; message?: string } => {
+            ): deserializedTrace is { success: boolean; data: { account: string; abi: Uint8Array | string }; message?: string } => {
                 if (!deserializedTrace.success || !this.isSetAbiActionData(deserializedTrace.data)) {
                     return false;
                 }
@@ -580,14 +580,17 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
     /**
      * The `setabi` action's deserialized payload is typed as `unknown` by IDeserializer
      * (deserialization can fail or return unrelated shapes for malformed ABIs), so narrow
-     * it here to the shape the eosio::setabi action schema actually produces.
+     * it here to the shape the eosio::setabi action schema actually produces. The `abi`
+     * field is a `bytes` value, which the objectified decode renders as a hex string; a
+     * deserializer that skips objectification hands over the raw Uint8Array instead.
+     * Both are accepted, because a guard that admits only one of them drops every
+     * published ABI on the other path without a trace.
      */
-    private isSetAbiActionData(data: unknown): data is { account: string; abi: Uint8Array } {
-        return (
-            typeof data === 'object' &&
-            data !== null &&
-            typeof (data as Record<string, unknown>).account === 'string' &&
-            (data as Record<string, unknown>).abi instanceof Uint8Array
-        );
+    private isSetAbiActionData(data: unknown): data is { account: string; abi: Uint8Array | string } {
+        if (typeof data !== 'object' || data === null) {
+            return false;
+        }
+        const { account, abi } = data as Record<string, unknown>;
+        return typeof account === 'string' && (abi instanceof Uint8Array || typeof abi === 'string');
     }
 }
