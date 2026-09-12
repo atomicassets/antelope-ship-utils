@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [2.0.1]
+
+### Bug fixes
+
+- Stores the ABI an `eosio::setabi` action publishes again. The setabi guard accepted the `abi` field only as a `Uint8Array`, while the objectified decode renders a `bytes` field as a hex string, so every published ABI was dropped without a log line and consumers kept deserializing with the ABI they held before the change. `deserializeAbi` now accepts the hex string as well as the raw bytes. A consumer that ran an affected version needs its stored ABIs checked against the chain for every contract that published an ABI in that period.
+
 ## [2.0.0]
 
 ### Breaking changes

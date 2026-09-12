@@ -395,6 +395,35 @@ describe('BlockProcessor processABIUpdates', () => {
         expect(abi).to.be.instanceOf(ABI);
     });
 
+    it('should call setAbi when the decoded abi field is a hex string', async () => {
+        // deserializeEosioType renders a `bytes` field as a hex string, so this is the shape
+        // the real deserializers hand to processABIUpdates.
+        const abiProvider = createMockAbiProvider({ abiByContract: { eosio: eosioAbi } });
+        const deserializer = createMockDeserializer({
+            resultOverride: (_callIndex, items) =>
+                items.map(() => ({
+                    success: true,
+                    data: { account: 'atomicassets', abi: Buffer.from(serializedSimpleAbi).toString('hex') },
+                })),
+        });
+
+        const processor = new BlockProcessor({
+            deserializer,
+            abiProvider,
+            failOnDeserializationError: true,
+            deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: sinon.stub() }],
+        });
+
+        await processor.processBlock({ block: createBlock(501), traces: [createSetAbiTrace('atomicassets')], deltas: [] });
+
+        expect(abiProvider.setAbi.calledOnce).to.be.true;
+        const [account, blockNum, abi] = abiProvider.setAbi.firstCall.args;
+        expect(account).to.equal('atomicassets');
+        expect(blockNum).to.equal(501);
+        expect(abi).to.be.instanceOf(ABI);
+        expect(String(abi.tables[0].name)).to.equal('pairs');
+    });
+
     it('should call setAbi for eosio account ABI even without matching listeners', async () => {
         const abiProvider = createMockAbiProvider({ abiByContract: { eosio: eosioAbi } });
         const deserializer = createMockDeserializer({
