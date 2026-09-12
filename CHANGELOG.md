@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [2.1.0]
+
+### Features
+
+- Exports the serialization helpers `extractShipTraces`, `extractShipDeltas`, `getActionAbiType`, `getTableAbiType`, `deserializeEosioType`, `serializeEosioType`, and `deserializeAbi`, so a consumer that runs its own processing loop decodes with the same code `BlockProcessor` uses instead of a copy. `deserializeEosioType` takes an options object as its fourth argument with `ignoreInvalidUTF8`, off by default, for a string field whose bytes no UTF-8 sequence allows; a boolean there is the legacy unused `checkLength` flag and still compiles. The `block` argument of the two extract functions is optional: neither reads it. The public `ShipActionTrace` and `ShipTableDelta` types admit the `action_trace_v1` and `table_delta_v1` variants the extractors already handle, so a consumer passes a v1 payload without a cast.
+
 ## [2.0.1]
 
 ### Bug fixes

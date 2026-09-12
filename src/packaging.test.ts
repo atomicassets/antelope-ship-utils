@@ -56,6 +56,13 @@ describe('Packaging', function () {
         const entry = require(path.join(root, 'dist', 'index.js'));
 
         for (const name of [
+            'deserializeAbi',
+            'deserializeEosioType',
+            'extractShipDeltas',
+            'extractShipTraces',
+            'getActionAbiType',
+            'getTableAbiType',
+            'serializeEosioType',
             'StateHistoryConnection',
             'ShipConsumer',
             'BlockProcessor',

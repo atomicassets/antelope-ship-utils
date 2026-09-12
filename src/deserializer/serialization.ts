@@ -14,12 +14,28 @@ export function convertEosioTimestampToDate(timestamp: string): Date {
     return new Date(timestamp + '+0000');
 }
 
+export interface IDeserializeOptions {
+    /**
+     * Decode a string field that carries invalid UTF-8 to the replacement
+     * character instead of throwing. Chains carry such strings in memos and
+     * attribute values, and a consumer that stores what it reads wants the
+     * row, not the exception. Off by default, as in @wharfkit/antelope.
+     */
+    ignoreInvalidUTF8?: boolean;
+}
+
+/**
+ * The fourth argument takes the options object. A boolean there is the legacy
+ * `checkLength` flag, which no code path reads any more and which is kept so an
+ * existing call keeps compiling.
+ */
 export function deserializeEosioType(
     type: string,
     data: Uint8Array | string,
     abi: ABI,
-    _checkLength: boolean = true
+    options: IDeserializeOptions | boolean = {}
 ): any {
+    const decodeOptions: IDeserializeOptions = typeof options === 'boolean' ? {} : options;
     let dataArray: Uint8Array;
     if (typeof data === 'string') {
         dataArray = Uint8Array.from(Buffer.from(data, 'hex'));
@@ -27,7 +43,7 @@ export function deserializeEosioType(
         dataArray = data;
     }
 
-    const result = Serializer.decode({ data: dataArray, type, abi });
+    const result = Serializer.decode({ data: dataArray, type, abi, ignoreInvalidUTF8: decodeOptions.ignoreInvalidUTF8 });
 
     return objectifyNumericFloats(result);
 }
@@ -42,7 +58,7 @@ export function extractShipTraces({
     traces: data,
 }: {
     traces: ShipTransactionTrace[];
-    block: ShipBlock;
+    block?: ShipBlock;
 }): IExtractedShipTrace[] {
     const transactions: EosioTransaction<Uint8Array>[] = [];
 
@@ -110,7 +126,7 @@ export function extractShipDeltas({
 }: {
     deltas: ShipTableDelta<Uint8Array>[];
     serializedDeltas?: string[];
-    block: ShipBlock;
+    block?: ShipBlock;
 }): IExtractedShipDelta<Uint8Array>[] {
     const result: IExtractedShipDelta[] = [];
 
