@@ -103,6 +103,64 @@ value against it, and `deserializeAbi` decodes the bytes an
 carries bytes no UTF-8 sequence allows; the default throws, as
 `@wharfkit/antelope` does.
 
+## Stored ABIs
+
+`StoredAbiProvider` keeps the ABI history of the accounts a consumer
+listens to in a durable store, so a restart or a replay decodes each block
+with the ABI a `setabi` published for it. The consumer implements `IAbiStore`
+over its own table and passes it as `store`, next to `accounts` (the
+accounts it registers listeners for), `rpcEndpoint`, and `fetchApi`.
+
+The store holds published ABIs only: every row the provider saves comes
+from an `eosio::setabi` at that block. Every lookup, `loadLatestPerAccount`
+included, returns only rows that carry an ABI and sit above `block_num` 0,
+so a row another provider wrote at block 0 never answers as a published
+ABI. `findOlder` returns rows strictly below its block, newest first, and
+`save` is idempotent on `(account, block_num)`.
+
+`init` loads the newest row for each account. `getAbi` answers from up to
+eight rows per account held in memory, then from the store, then from the
+chain. A chain ABI is held in memory for the account and never saved, so
+the table keeps published history only. `setAbi` saves the published row;
+when the save fails, the cached row keeps answering. Save calls reach the
+store one at a time, in the order of the `setabi` actions, so the last
+`setabi` for an account in a block is the stored row.
+
+`accounts` limits only what `init` loads. The provider saves every
+`setabi` the processor passes it, and `BlockProcessor` passes the `setabi`
+of `eosio` and of every account a listener matches, so a wildcard listener
+makes the `setabi` of every account on the chain a stored row. A consumer
+that stores ABIs registers listeners for explicit accounts.
+
+The provider is an `EventEmitter` and emits `warn` as
+`(message: string, error?: Error)`, the shape `BlockProcessor` uses, so one
+listener serves both. It warns when it answers with a chain ABI, when a
+save fails, and when `refresh` finds a chain ABI that differs from the
+cached one.
+
+`refresh(account, blockNum)` is an optional `IAbiProvider` method. With
+`failOnDeserializationError` on, `BlockProcessor` calls it once per account
+per block when a cached ABI lacks a table or action type, or when no stored
+ABI decodes a row, and retries once with the ABI it returns. While the
+failures persist, the provider fetches the chain ABI at most once per
+account for each cached ABI in every `refreshIntervalBlocks` blocks, an
+optional constructor parameter with a default of 1200. It returns `null`
+when the chain ABI matches, and otherwise replaces the cached ABI in memory
+only. A new `setabi` for the account, or a `rollback`, allows the next
+fetch inside the interval. When the reader runs behind the chain head, the
+chain ABI can be later than the block, so the replaced ABI can decode rows
+of that account with the later ABI or drop them. Each replacement emits
+`warn` and lasts until the next `setabi` for that account, a `rollback`
+below its block, or a restart.
+
+`rollback(blockNum)` drops every cached row above `blockNum`. It also
+restores the published ABI of a row that a refresh above `blockNum`
+replaced, and drops a chain ABI fetched for a block above `blockNum`, so
+memory keeps nothing from a discarded block. Call it from the consumer's
+fork path before the replay starts. It does not touch the
+store. If the consumer's store writes are not part of the transaction the
+fork rollback undoes, the store keeps the row from a forked-out block.
+
 ## IShipConnectionOptions
 
 Passed as `connectionOptions` to `StateHistoryConnection`. Every field is

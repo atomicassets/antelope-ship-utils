@@ -16,6 +16,31 @@ export interface IAbiProvider {
     setAbi(contract: string, blockNum: number, abi: ABI): Promise<void>;
 
     getOlderAbis?(contract: string, blockNum: number): Promise<ABI[]>;
+
+    refresh?(account: string, blockNum: number): Promise<ABI | null>;
+}
+
+export interface IAbiStoreRow {
+    account: string;
+    block_num: number;
+    abi: ABI;
+}
+
+/**
+ * Durable ABI history behind `StoredAbiProvider`. The store holds published ABIs only, and
+ * every lookup returns only rows that carry an ABI and sit above `block_num` 0. `findOlder`
+ * returns rows strictly below `belowBlockNum`, newest first; `save` is idempotent on
+ * `(account, block_num)`. The provider calls `save` one at a time, in the order of the
+ * `setabi` actions, so the last `setabi` for an account in a block is the stored row.
+ */
+export interface IAbiStore {
+    loadLatestPerAccount(accounts: string[]): Promise<IAbiStoreRow[]>;
+
+    findAtOrBefore(account: string, blockNum: number): Promise<IAbiStoreRow | null>;
+
+    findOlder(account: string, belowBlockNum: number, limit: number): Promise<IAbiStoreRow[]>;
+
+    save(row: IAbiStoreRow): Promise<void>;
 }
 
 export interface IShipConsumer {

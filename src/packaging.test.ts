@@ -69,6 +69,7 @@ describe('Packaging', function () {
             'EOSJsDeserializer',
             'LocalAbiProvider',
             'LocalBlockRepository',
+            'StoredAbiProvider',
         ]) {
             expect(entry[name], name).to.be.a('function');
         }
