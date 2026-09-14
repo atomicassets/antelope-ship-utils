@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.0]
+
+### Features
+
+- Adds `StoredAbiProvider`, an ABI provider over a durable store the consumer implements through the exported `IAbiStore` and `IAbiStoreRow` types. It keeps up to eight published ABIs per account in memory, each under the block that published it, reads older history from the store, and answers an account with no published row from the chain's current ABI held in memory and never saved. It emits `warn` as `(message, error?)` when it answers with a chain ABI, when a save fails, and when a refresh finds a changed ABI, and exposes `rollback(blockNum)` for the consumer's fork path. Saves reach the store one at a time in the order of the `setabi` actions. The optional `refreshIntervalBlocks` parameter, default 1200, sets how many blocks a refresh that found an equal ABI skips the next fetch.
+- `IAbiProvider` gains an optional `refresh(account, blockNum)`, which `BlockProcessor` calls when a cached ABI lacks a type or no stored ABI decodes a row. The "Stored ABIs" section of the README gives the conditions and the retry. The endings do not change: a type still missing stops the block. A row still undecodable is dropped with a `warn` when the provider has `getOlderAbis`, and the processor throws when the provider lacks it. A provider without `refresh` keeps its behavior.
+
+### Other changes
+
+- `BlockProcessor` prewarms ABIs only for the accounts of the deltas a listener takes, the same rule the trace path applies, so a provider fetches no ABI for an account nothing deserializes. Decoded output does not change.
+
 ## [2.1.0]
 
 ### Features

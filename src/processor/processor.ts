@@ -1,3 +1,5 @@
+import { ABI } from '@wharfkit/antelope';
+
 import { IAbiProvider, IBlockProcessor } from '../types/interfaces';
 import {
     FullShipBlock,
@@ -81,13 +83,16 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
         }
 
         const deserStart = Date.now();
+        // One refresh per account per block, shared by the trace and delta paths.
+        const refreshes = new Map<string, Promise<ABI | null>>();
 
         const [tracesToProcess, deltasToProcess] = await Promise.all([
             this.findAndDeserializeTraces({
                 block,
                 traces,
+                refreshes,
             }),
-            this.findAndDeserializeDeltas({ block, deltas }),
+            this.findAndDeserializeDeltas({ block, deltas, refreshes }),
         ]);
 
         const deserMs = Date.now() - deserStart;
@@ -147,9 +152,11 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
     private async findAndDeserializeDeltas({
         deltas,
         block,
+        refreshes,
     }: {
         block: FullShipBlock;
         deltas: IExtractedShipDelta<Uint8Array>[];
+        refreshes: Map<string, Promise<ABI | null>>;
     }): Promise<{ data: IDeltaListenerPayload<unknown>; listeners: IDeltaListener[] }[]> {
         const deltasToProcess = deltas.reduce((toProcess, d) => {
             const listeners = this.findDeltaProcessors(d);
@@ -157,7 +164,8 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
             return toProcess;
         }, [] as { data: IExtractedShipDelta; listeners: IDeltaListener[] }[]);
 
-        const uniqueAccounts = [...new Set(deltas.map((t) => t.delta.code))];
+        // Only the deltas a listener takes are deserialized, so only their accounts are prewarmed.
+        const uniqueAccounts = [...new Set(deltasToProcess.map((d) => d.data.delta.code))];
 
         await Promise.all(
             uniqueAccounts.map((account) =>
@@ -167,9 +175,21 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
 
         const deserializedDeltas = await Promise.all(
             deltasToProcess.map(async (d) => {
-                try {
-                    const abi = await this.abiProvider.getAbi(d.data.delta.code, block.this_block.block_num);
+                let abi: ABI;
 
+                try {
+                    abi = await this.abiProvider.getAbi(d.data.delta.code, block.this_block.block_num);
+                } catch (error) {
+                    if (this.failOnDeserializationError) {
+                        throw new Error(
+                            `Failed to get abi for ${d.data.delta.code} at #${block.this_block.block_num} ${error}`
+                        );
+                    }
+
+                    return undefined;
+                }
+
+                try {
                     return {
                         data: d.data.delta.value,
                         abi,
@@ -177,6 +197,21 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                     };
                 } catch (error) {
                     if (this.failOnDeserializationError) {
+                        // The chain's current ABI can name a table the cached ABI lacks.
+                        const refreshed = await this.refreshAbi(d.data.delta.code, block.this_block.block_num, refreshes);
+
+                        if (refreshed) {
+                            try {
+                                return {
+                                    data: d.data.delta.value,
+                                    abi: refreshed,
+                                    type: getTableAbiType(refreshed, d.data.delta.code, d.data.delta.table),
+                                };
+                            } catch {
+                                // still missing: end in the throw below
+                            }
+                        }
+
                         throw new Error(
                             `Failed to get abi for ${d.data.delta.code} at #${block.this_block.block_num} ${error}`
                         );
@@ -221,6 +256,44 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                             }
                         } catch {
                             // try next older ABI
+                        }
+                    }
+                }
+            }
+
+            if (this.abiProvider.refresh) {
+                // The chain's current ABI can decode a row every stored ABI fails on:
+                // refresh each account once and retry each failed row once.
+                const failedByAccount = new Map<string, number[]>();
+
+                deserializedDeltas.forEach((row, idx) => {
+                    if (!row.success) {
+                        const code = deltasToProcess[idx]!.data.delta.code;
+                        failedByAccount.set(code, [...(failedByAccount.get(code) ?? []), idx]);
+                    }
+                });
+
+                for (const [code, indices] of failedByAccount) {
+                    const refreshed = await this.refreshAbi(code, block.this_block.block_num, refreshes);
+
+                    if (!refreshed) {
+                        continue;
+                    }
+
+                    for (const idx of indices) {
+                        const dp = deltasToProcess[idx]!;
+
+                        try {
+                            const type = getTableAbiType(refreshed, dp.data.delta.code, dp.data.delta.table);
+                            const [result] = await this.deserializer.deserialize([
+                                { data: dp.data.delta.value, abi: refreshed, type },
+                            ]);
+
+                            if (result?.success) {
+                                deserializedDeltas[idx] = result;
+                            }
+                        } catch {
+                            // the row keeps its failure and ends below
                         }
                     }
                 }
@@ -307,9 +380,11 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
     private async findAndDeserializeTraces({
         block,
         traces,
+        refreshes,
     }: {
         block: FullShipBlock;
         traces: IExtractedShipTrace<Uint8Array>[];
+        refreshes: Map<string, Promise<ABI | null>>;
     }): Promise<{ data: ITraceListenerPayload<unknown>; listeners: ITraceListener[] }[]> {
         const tracesToProcess = traces.reduce((toProcess, t) => {
             const listeners = this.findTraceProcessors(t);
@@ -327,9 +402,21 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
 
         const deserializedTraces = await Promise.all(
             tracesToProcess.map(async (t) => {
-                try {
-                    const abi = await this.abiProvider.getAbi(t.data.trace.act.account, block.this_block.block_num);
+                let abi: ABI;
 
+                try {
+                    abi = await this.abiProvider.getAbi(t.data.trace.act.account, block.this_block.block_num);
+                } catch (error) {
+                    if (this.failOnDeserializationError) {
+                        throw new Error(
+                            `Failed to get abi for ${t.data.trace.act.account} at #${block.this_block.block_num} ${error}`
+                        );
+                    }
+
+                    return undefined;
+                }
+
+                try {
                     return {
                         data: t.data.trace.act.data,
                         abi,
@@ -337,6 +424,25 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                     };
                 } catch (error) {
                     if (this.failOnDeserializationError) {
+                        // The chain's current ABI can name an action the cached ABI lacks.
+                        const refreshed = await this.refreshAbi(
+                            t.data.trace.act.account,
+                            block.this_block.block_num,
+                            refreshes
+                        );
+
+                        if (refreshed) {
+                            try {
+                                return {
+                                    data: t.data.trace.act.data,
+                                    abi: refreshed,
+                                    type: getActionAbiType(refreshed, t.data.trace.act.account, t.data.trace.act.name),
+                                };
+                            } catch {
+                                // still missing: end in the throw below
+                            }
+                        }
+
                         throw new Error(
                             `Failed to get abi for ${t.data.trace.act.account} at #${block.this_block.block_num} ${error}`
                         );
@@ -381,6 +487,43 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                             }
                         } catch {
                             // try next older ABI
+                        }
+                    }
+                }
+            }
+
+            if (this.abiProvider.refresh) {
+                // See the delta path: refresh each account once and retry each failed row once.
+                const failedByAccount = new Map<string, number[]>();
+
+                deserializedTraces.forEach((row, idx) => {
+                    if (!row.success) {
+                        const account = tracesToProcess[idx]!.data.trace.act.account;
+                        failedByAccount.set(account, [...(failedByAccount.get(account) ?? []), idx]);
+                    }
+                });
+
+                for (const [account, indices] of failedByAccount) {
+                    const refreshed = await this.refreshAbi(account, block.this_block.block_num, refreshes);
+
+                    if (!refreshed) {
+                        continue;
+                    }
+
+                    for (const idx of indices) {
+                        const tp = tracesToProcess[idx]!;
+
+                        try {
+                            const type = getActionAbiType(refreshed, tp.data.trace.act.account, tp.data.trace.act.name);
+                            const [result] = await this.deserializer.deserialize([
+                                { data: tp.data.trace.act.data, abi: refreshed, type },
+                            ]);
+
+                            if (result?.success) {
+                                deserializedTraces[idx] = result;
+                            }
+                        } catch {
+                            // the row keeps its failure and ends below
                         }
                     }
                 }
@@ -575,6 +718,36 @@ export class BlockProcessor extends EventEmitter implements IBlockProcessor {
                 }
             })
         );
+    }
+
+    /**
+     * Asks a provider that implements `refresh` for the chain's current ABI, once per account
+     * per block. A rejection emits `warn` and counts as `null`, so the path ends as it would
+     * without a refresh.
+     */
+    private refreshAbi(
+        account: string,
+        blockNum: number,
+        refreshes: Map<string, Promise<ABI | null>>
+    ): Promise<ABI | null> {
+        let pending = refreshes.get(account);
+
+        if (!pending) {
+            pending = this.abiProvider.refresh
+                ? this.abiProvider.refresh(account, blockNum).catch((e) => {
+                      this.emit(
+                          'warn',
+                          `Refresh of ABI ${account} at block ${blockNum} failed`,
+                          e instanceof Error ? e : new Error(String(e))
+                      );
+
+                      return null;
+                  })
+                : Promise.resolve(null);
+            refreshes.set(account, pending);
+        }
+
+        return pending;
     }
 
     /**

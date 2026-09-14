@@ -65,11 +65,50 @@ const simpleAbiDef = {
 };
 const serializedSimpleAbi = Serializer.encode({ object: ABI.from(simpleAbiDef), type: ABI }).array;
 
+// ABI that names both the config and the assets tables (the chain's current ABI in refresh tests)
+const configAndAssetsAbi = ABI.from({
+    version: 'eosio::abi/1.1',
+    structs: [
+        { name: 'config_s', base: '', fields: [{ name: 'collection_format', type: 'string[]' }] },
+        { name: 'assets_s', base: '', fields: [{ name: 'asset_id', type: 'uint64' }] },
+    ],
+    tables: [
+        { name: 'config', type: 'config_s', index_type: 'i64', key_names: [], key_types: [] },
+        { name: 'assets', type: 'assets_s', index_type: 'i64', key_names: [], key_types: [] },
+    ],
+    actions: [],
+});
+
+// ABI that names both the transfer and the mint actions
+const transferAndMintAbi = ABI.from({
+    version: 'eosio::abi/1.1',
+    structs: [
+        { name: 'transfer', base: '', fields: [{ name: 'from', type: 'name' }, { name: 'to', type: 'name' }] },
+        { name: 'mint', base: '', fields: [{ name: 'to', type: 'name' }] },
+    ],
+    tables: [],
+    actions: [
+        { name: 'transfer', type: 'transfer', ricardian_contract: '' },
+        { name: 'mint', type: 'mint', ricardian_contract: '' },
+    ],
+});
+
+// Succeeds only for items decoded with `abi`, so a test proves which ABI a retry used.
+function decodesOnlyWith(abi: ABI): (callIndex: number, items: any[]) => any[] {
+    return (_callIndex, items) =>
+        items.map((item) =>
+            item?.abi === abi
+                ? { success: true, data: { deserialized: true } }
+                : { success: false, data: null, message: 'Read past end of buffer' }
+        );
+}
+
 function createMockAbiProvider(opts: {
     getOlderAbis?: boolean;
+    refresh?: boolean;
     primaryAbi?: ABI;
     abiByContract?: Record<string, ABI>;
-} = {}): IAbiProvider & { getOlderAbis?: sinon.SinonStub; setAbi: sinon.SinonStub } {
+} = {}): IAbiProvider & { getOlderAbis?: sinon.SinonStub; refresh?: sinon.SinonStub; setAbi: sinon.SinonStub } {
     const abiByContract = opts.abiByContract;
     const defaultAbi = opts.primaryAbi ?? newConfigAbi;
 
@@ -85,6 +124,9 @@ function createMockAbiProvider(opts: {
     };
     if (opts.getOlderAbis) {
         provider.getOlderAbis = sinon.stub().resolves([]);
+    }
+    if (opts.refresh) {
+        provider.refresh = sinon.stub().resolves(null);
     }
     return provider;
 }
@@ -362,6 +404,398 @@ describe('BlockProcessor ABI fallback', () => {
                 expect(err.message).to.include('Failed to deserialize traces');
             }
         });
+    });
+});
+
+async function expectRejection(promise: Promise<unknown>): Promise<Error> {
+    return promise.then(
+        () => expect.fail('Should have thrown'),
+        (err: Error) => err
+    );
+}
+
+describe('BlockProcessor ABI refresh', () => {
+    describe('prewarm', () => {
+        for (const failOnDeserializationError of [true, false]) {
+            it(`prewarms only the accounts of deltas a listener takes (failOnDeserializationError ${failOnDeserializationError})`, async () => {
+                const abiProvider = createMockAbiProvider({ primaryAbi: newConfigAbi });
+                const processor = new BlockProcessor({
+                    deserializer: createMockDeserializer(),
+                    abiProvider,
+                    failOnDeserializationError,
+                    deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: sinon.stub() }],
+                });
+
+                await processor.processBlock({
+                    block: createBlock(100),
+                    traces: [],
+                    deltas: [createDelta('atomicassets', 'config'), createDelta('unlistened', 'rows')],
+                });
+
+                const accounts = (abiProvider.getAbi as sinon.SinonStub).getCalls().map((call) => call.args[0]);
+                expect(accounts).to.include('atomicassets');
+                expect(accounts).to.not.include('unlistened');
+            });
+        }
+    });
+
+    describe('missing type on deltas', () => {
+        it('refreshes once per account and retries the type lookup and decode with the returned ABI', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, primaryAbi: newConfigAbi });
+            abiProvider.refresh!.resolves(configAndAssetsAbi);
+            const deserializer = createMockDeserializer({ resultOverride: decodesOnlyWith(configAndAssetsAbi) });
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer,
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: 'atomicassets', table: 'assets', processor: listener }],
+            });
+
+            await processor.processBlock({
+                block: createBlock(100),
+                traces: [],
+                deltas: [createDelta('atomicassets', 'assets'), createDelta('atomicassets', 'assets')],
+            });
+
+            expect(abiProvider.refresh!.calledOnce).to.be.true;
+            expect(abiProvider.refresh!.firstCall.args).to.deep.equal(['atomicassets', 100]);
+            expect(listener.callCount).to.equal(2);
+        });
+
+        it('rethrows a getAbi rejection unchanged without a refresh', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true });
+            (abiProvider.getAbi as sinon.SinonStub).rejects(new Error('store down'));
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer(),
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: sinon.stub() }],
+            });
+
+            const err = await expectRejection(
+                processor.processBlock({ block: createBlock(100), traces: [], deltas: [createDelta('atomicassets', 'config')] })
+            );
+
+            expect(err.message).to.equal('Failed to get abi for atomicassets at #100 Error: store down');
+            expect(abiProvider.refresh!.called).to.be.false;
+        });
+
+        // The last element is the error message of the refresh warning the ending emits, if any.
+        const endings: Array<[string, (refresh: sinon.SinonStub) => void, string | null]> = [
+            ['refresh returns null', (refresh) => refresh.resolves(null), null],
+            ['refresh rejects', (refresh) => refresh.rejects(new Error('rpc down')), 'rpc down'],
+            ['the refreshed ABI still lacks the table', (refresh) => refresh.resolves(oldConfigAbi), null],
+        ];
+
+        for (const [name, arrange, refreshError] of endings) {
+            it(`ends in the unchanged throw when ${name}`, async () => {
+                const abiProvider = createMockAbiProvider({ refresh: true, primaryAbi: newConfigAbi });
+                arrange(abiProvider.refresh!);
+
+                const processor = new BlockProcessor({
+                    deserializer: createMockDeserializer(),
+                    abiProvider,
+                    failOnDeserializationError: true,
+                    deltaListeners: [{ contract: 'atomicassets', table: 'assets', processor: sinon.stub() }],
+                });
+
+                const warnings: Array<{ message: string; error?: Error }> = [];
+                processor.on('warn', (message: string, error?: Error) => warnings.push({ message, error }));
+
+                const err = await expectRejection(
+                    processor.processBlock({ block: createBlock(100), traces: [], deltas: [createDelta('atomicassets', 'assets')] })
+                );
+
+                expect(err.message).to.equal(
+                    'Failed to get abi for atomicassets at #100 Error: Type for table not found atomicassets:assets'
+                );
+                expect(abiProvider.refresh!.calledOnce).to.be.true;
+
+                if (refreshError) {
+                    expect(warnings).to.have.length(1);
+                    expect(warnings[0]!.message).to.equal('Refresh of ABI atomicassets at block 100 failed');
+                    expect(warnings[0]!.error?.message).to.equal(refreshError);
+                } else {
+                    expect(warnings).to.have.length(0);
+                }
+            });
+        }
+
+        it('throws on a missing table for a provider without refresh', async () => {
+            const abiProvider = createMockAbiProvider({ getOlderAbis: true, primaryAbi: newConfigAbi });
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer(),
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: 'atomicassets', table: 'assets', processor: sinon.stub() }],
+            });
+
+            const err = await expectRejection(
+                processor.processBlock({ block: createBlock(100), traces: [], deltas: [createDelta('atomicassets', 'assets')] })
+            );
+
+            expect(err.message).to.include('Failed to get abi for atomicassets');
+        });
+
+        it('does not refresh when failOnDeserializationError is false', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, getOlderAbis: true, primaryAbi: newConfigAbi });
+            abiProvider.refresh!.resolves(configAndAssetsAbi);
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ failNonEmpty: 999 }),
+                abiProvider,
+                failOnDeserializationError: false,
+                deltaListeners: [{ contract: 'atomicassets', table: '*', processor: listener }],
+            });
+
+            await processor.processBlock({
+                block: createBlock(100),
+                traces: [],
+                deltas: [createDelta('atomicassets', 'assets'), createDelta('atomicassets', 'config')],
+            });
+
+            expect(abiProvider.refresh!.called).to.be.false;
+            expect(listener.called).to.be.false;
+        });
+    });
+
+    describe('undecodable deltas', () => {
+        it('refreshes once per account after the older ABIs are exhausted and retries each row once', async () => {
+            const refreshedAbi = ABI.from(oldConfigAbi.toJSON());
+            const abiProvider = createMockAbiProvider({ refresh: true, getOlderAbis: true, primaryAbi: newConfigAbi });
+            abiProvider.getOlderAbis!.resolves([oldConfigAbi]);
+            abiProvider.refresh!.resolves(refreshedAbi);
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ resultOverride: decodesOnlyWith(refreshedAbi) }),
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: '*', table: 'config', processor: listener }],
+            });
+
+            const warnings: string[] = [];
+            processor.on('warn', (msg: string) => warnings.push(msg));
+
+            await processor.processBlock({
+                block: createBlock(100),
+                traces: [],
+                deltas: [
+                    createDelta('atomicassets', 'config'),
+                    createDelta('atomicassets', 'config'),
+                    createDelta('pink.gg', 'config'),
+                ],
+            });
+
+            expect(abiProvider.getOlderAbis!.callCount).to.equal(3);
+            expect(abiProvider.refresh!.callCount).to.equal(2);
+            expect(abiProvider.refresh!.getCalls().map((call) => call.args)).to.have.deep.members([
+                ['atomicassets', 100],
+                ['pink.gg', 100],
+            ]);
+            expect(listener.callCount).to.equal(3);
+            expect(warnings).to.have.length(0);
+        });
+
+        it('runs the refresh step directly for a provider with refresh but no getOlderAbis', async () => {
+            const refreshedAbi = ABI.from(oldConfigAbi.toJSON());
+            const abiProvider = createMockAbiProvider({ refresh: true, primaryAbi: newConfigAbi });
+            abiProvider.refresh!.resolves(refreshedAbi);
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ resultOverride: decodesOnlyWith(refreshedAbi) }),
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: listener }],
+            });
+
+            await processor.processBlock({ block: createBlock(100), traces: [], deltas: [createDelta('atomicassets', 'config')] });
+
+            expect(abiProvider.refresh!.calledOnce).to.be.true;
+            expect(listener.calledOnce).to.be.true;
+        });
+
+        it('warns and drops the row when refresh returns null (with getOlderAbis)', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, getOlderAbis: true, primaryAbi: newConfigAbi });
+            abiProvider.getOlderAbis!.resolves([oldConfigAbi]);
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ failNonEmpty: 999 }),
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: listener }],
+            });
+
+            const warnings: string[] = [];
+            processor.on('warn', (msg: string) => warnings.push(msg));
+
+            await processor.processBlock({ block: createBlock(100), traces: [], deltas: [createDelta('atomicassets', 'config')] });
+
+            expect(abiProvider.refresh!.calledOnce).to.be.true;
+            expect(warnings).to.have.length(1);
+            expect(warnings[0]).to.include('Skipping undeserializable delta');
+            expect(warnings[0]).to.include('"code":"atomicassets"');
+            expect(warnings[0]).to.include('"delta":"config"');
+            expect(warnings[0]).to.include('"block_num":100');
+            expect(listener.called).to.be.false;
+        });
+
+        it('throws when the refreshed ABI does not decode either (without getOlderAbis)', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, primaryAbi: newConfigAbi });
+            abiProvider.refresh!.resolves(ABI.from(oldConfigAbi.toJSON()));
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ failNonEmpty: 999 }),
+                abiProvider,
+                failOnDeserializationError: true,
+                deltaListeners: [{ contract: 'atomicassets', table: 'config', processor: sinon.stub() }],
+            });
+
+            const err = await expectRejection(
+                processor.processBlock({ block: createBlock(100), traces: [], deltas: [createDelta('atomicassets', 'config')] })
+            );
+
+            expect(err.message).to.include('Failed to deserialize deltas');
+            expect(abiProvider.refresh!.calledOnce).to.be.true;
+        });
+    });
+
+    describe('traces', () => {
+        it('refreshes and retries when the cached ABI lacks the action', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, primaryAbi: newTransferAbi });
+            abiProvider.refresh!.resolves(transferAndMintAbi);
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ resultOverride: decodesOnlyWith(transferAndMintAbi) }),
+                abiProvider,
+                failOnDeserializationError: true,
+                traceListeners: [{ account: 'eosio.token', name: 'mint', processor: listener }],
+            });
+
+            await processor.processBlock({ block: createBlock(100), traces: [createTrace('eosio.token', 'mint')], deltas: [] });
+
+            expect(abiProvider.refresh!.calledOnce).to.be.true;
+            expect(listener.calledOnce).to.be.true;
+        });
+
+        it('ends in the unchanged throw when refresh returns null for a missing action', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, primaryAbi: newTransferAbi });
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer(),
+                abiProvider,
+                failOnDeserializationError: true,
+                traceListeners: [{ account: 'eosio.token', name: 'mint', processor: sinon.stub() }],
+            });
+
+            const err = await expectRejection(
+                processor.processBlock({ block: createBlock(100), traces: [createTrace('eosio.token', 'mint')], deltas: [] })
+            );
+
+            expect(err.message).to.equal(
+                'Failed to get abi for eosio.token at #100 Error: Type for action not found eosio.token:mint'
+            );
+        });
+
+        it('refreshes once per account after the older ABIs are exhausted and retries each trace once', async () => {
+            const refreshedAbi = ABI.from(oldTransferAbi.toJSON());
+            const abiProvider = createMockAbiProvider({ refresh: true, getOlderAbis: true, primaryAbi: newTransferAbi });
+            abiProvider.getOlderAbis!.resolves([oldTransferAbi]);
+            abiProvider.refresh!.resolves(refreshedAbi);
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ resultOverride: decodesOnlyWith(refreshedAbi) }),
+                abiProvider,
+                failOnDeserializationError: true,
+                traceListeners: [{ account: '*', name: 'transfer', processor: listener }],
+            });
+
+            await processor.processBlock({
+                block: createBlock(100),
+                traces: [
+                    createTrace('eosio.token', 'transfer'),
+                    createTrace('eosio.token', 'transfer'),
+                    createTrace('wax.token', 'transfer'),
+                ],
+                deltas: [],
+            });
+
+            expect(abiProvider.refresh!.callCount).to.equal(2);
+            expect(listener.callCount).to.equal(3);
+        });
+
+        it('warns and drops the trace when refresh returns null (with getOlderAbis)', async () => {
+            const abiProvider = createMockAbiProvider({ refresh: true, getOlderAbis: true, primaryAbi: newTransferAbi });
+            const listener = sinon.stub();
+
+            const processor = new BlockProcessor({
+                deserializer: createMockDeserializer({ failNonEmpty: 999 }),
+                abiProvider,
+                failOnDeserializationError: true,
+                traceListeners: [{ account: 'eosio.token', name: 'transfer', processor: listener }],
+            });
+
+            const warnings: string[] = [];
+            processor.on('warn', (msg: string) => warnings.push(msg));
+
+            await processor.processBlock({ block: createBlock(100), traces: [createTrace('eosio.token', 'transfer')], deltas: [] });
+
+            expect(abiProvider.refresh!.calledOnce).to.be.true;
+            expect(warnings).to.have.length(1);
+            expect(warnings[0]).to.include('"account":"eosio.token"');
+            expect(warnings[0]).to.include('"name":"transfer"');
+            expect(warnings[0]).to.include('"block_num":100');
+            expect(listener.called).to.be.false;
+        });
+    });
+
+    it('shares one refresh per account between the trace and delta paths of a block', async () => {
+        const abiProvider = createMockAbiProvider({
+            refresh: true,
+            abiByContract: { atomicassets: newTransferAbi },
+        });
+        const combinedAbi = ABI.from({
+            version: 'eosio::abi/1.1',
+            structs: [
+                { name: 'assets_s', base: '', fields: [{ name: 'asset_id', type: 'uint64' }] },
+                { name: 'mint', base: '', fields: [{ name: 'to', type: 'name' }] },
+            ],
+            tables: [{ name: 'assets', type: 'assets_s', index_type: 'i64', key_names: [], key_types: [] }],
+            actions: [{ name: 'mint', type: 'mint', ricardian_contract: '' }],
+        });
+        abiProvider.refresh!.callsFake(async () => {
+            await new Promise((resolve) => setImmediate(resolve));
+            return combinedAbi;
+        });
+        const traceListener = sinon.stub();
+        const deltaListener = sinon.stub();
+
+        const processor = new BlockProcessor({
+            deserializer: createMockDeserializer({ resultOverride: decodesOnlyWith(combinedAbi) }),
+            abiProvider,
+            failOnDeserializationError: true,
+            traceListeners: [{ account: 'atomicassets', name: 'mint', processor: traceListener }],
+            deltaListeners: [{ contract: 'atomicassets', table: 'assets', processor: deltaListener }],
+        });
+
+        await processor.processBlock({
+            block: createBlock(100),
+            traces: [createTrace('atomicassets', 'mint')],
+            deltas: [createDelta('atomicassets', 'assets')],
+        });
+
+        expect(abiProvider.refresh!.calledOnce).to.be.true;
+        expect(traceListener.calledOnce).to.be.true;
+        expect(deltaListener.calledOnce).to.be.true;
     });
 });
 

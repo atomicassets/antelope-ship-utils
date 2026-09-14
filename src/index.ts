@@ -5,6 +5,7 @@ import ShipError from './error/ship';
 import { BlockProcessor } from './processor/processor';
 import { StateHistoryConnection } from './ship';
 import { LocalAbiProvider } from './abi/local';
+import { StoredAbiProvider } from './abi/stored';
 import { LocalBlockRepository } from './consumer/repositories/local';
 import { objectifyNumericFloats } from './deserializer/objectify';
 import {
@@ -25,6 +26,7 @@ export {
     BlockProcessor,
     StateHistoryConnection,
     LocalAbiProvider,
+    StoredAbiProvider,
     LocalBlockRepository,
     objectifyNumericFloats,
     deserializeAbi,
@@ -38,7 +40,14 @@ export {
 
 export type { IConsumerSettings } from './consumer/consumer';
 export type { IDeserializeOptions } from './deserializer/serialization';
-export type { IAbiProvider, IBlockProcessor, IProcessedBlockRepository, IShipConsumer } from './types/interfaces';
+export type {
+    IAbiProvider,
+    IAbiStore,
+    IAbiStoreRow,
+    IBlockProcessor,
+    IProcessedBlockRepository,
+    IShipConsumer,
+} from './types/interfaces';
 export type { ShipBlock, ShipBlockResponse, ShipTableDelta, ShipTransactionTrace } from './types/ship';
 
 export * from './types/ship';
