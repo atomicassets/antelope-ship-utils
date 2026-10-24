@@ -23,16 +23,24 @@ export class EOSJsDeserializer implements IDeserializer {
     }
 
     deserialize(
-        param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>
+        param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>,
     ): Promise<Array<{ success: boolean; data: unknown; message?: string }>> {
         if (!this.strategyDeserializer) {
             throw new Error('EOSJsDeserializer.deserialize called before init()');
         }
 
+        // Keep the pre-init error synchronous for existing callers.
+        return this.deserializeInitialized(this.strategyDeserializer, param);
+    }
+
+    private async deserializeInitialized(
+        deserializer: IDeserializer,
+        param: Array<{ type: string; data: Uint8Array | string; abi?: any } | undefined>,
+    ): Promise<Array<{ success: boolean; data: unknown; message?: string }>> {
         this.waiting += 1;
 
         try {
-            return this.strategyDeserializer.deserialize(param);
+            return await deserializer.deserialize(param);
         } finally {
             this.waiting -= 1;
         }

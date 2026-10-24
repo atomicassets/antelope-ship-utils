@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.1]
+
+### Bug fixes
+
+- Keeps deserializer `waiting` counts until each submitted batch settles, including queued work, failures and termination. Previously both parallel layers decremented immediately after returning the pending promise.
+
+### Other changes
+
+- Replaces `node-worker-threads-pool` with Piscina 5.x while retaining CommonJS, explicit fixed worker counts, warm workers, single-thread fallback, ordered row results and ABI overrides. Termination rejects pending batches and keeps the pool closed until reconnect initializes a new strategy. Documents per-process sizing, adds lifecycle/equivalence tests and records 10,000-block and one-million-block WAX mainnet replay comparisons.
+
 ## [2.2.0]
 
 ### Features

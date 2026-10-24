@@ -49,7 +49,7 @@
     "dependencies": {
         "common-tags": "^1.8.2",
         "@wharfkit/antelope": "^1.1.1",
-        "node-worker-threads-pool": "^1.5.1",
+        "piscina": "^5.3.2",
         "p-queue": "^6.6.2",
         "ws": "^8.20.1"
     },

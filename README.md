@@ -103,6 +103,39 @@ value against it, and `deserializeAbi` decodes the bytes an
 carries bytes no UTF-8 sequence allows; the default throws, as
 `@wharfkit/antelope` does.
 
+## Deserialization workers
+
+`EOSJsDeserializer({ threads })` uses a Piscina pool when `threads` is
+positive; omit it or use `0` for the existing single-thread strategy.
+`ParallelDeserializer(abi, threads = 1)` is also exported. A pool requires a
+positive integer worker count and keeps exactly that many workers warm until
+`terminate()`. Each worker initializes the SHIP ABI once and uses the same
+row decoder as the single-thread strategy, including per-row ABI overrides
+and ordered `{ success, data, message? }` results. Piscina 5.x supports the
+package's Node 22 minimum and CommonJS consumers.
+
+Size pools per reader process. For example, three readers configured with
+`threads: 4` keep twelve deserialization workers, plus their main threads and
+other application workers. Budget CPU and memory across all readers and
+services on the host or container; the machine's CPU count is not a budget
+available independently to every process. Start with a small explicit count
+and measure throughput, backlog, CPU and memory under your own workload.
+The package neither chooses a CPU-based default nor silently caps an explicit
+count. Warm workers retain their ABI and memory while idle.
+
+`waiting` counts submitted batches whose promises have not settled, including
+queued and running batches, rather than rows or only queued tasks. The task
+queue remains unbounded for compatibility; callers must bound submitted work.
+`terminate()` stops workers and rejects pending batches. It is idempotent, and
+a terminated pool rejects further work. On reconnect, call `init(abi)` again
+after termination to create a pool with the new SHIP ABI; the connection
+already follows this lifecycle. A pool/bootstrap failure rejects work, while
+an individual malformed row keeps its existing failure result.
+
+See the [WAX mainnet replay comparisons](./docs/benchmarks/piscina-mainnet-replay.md)
+for measured indexing throughput, data-equivalence checks and the conditions
+and limitations of that comparison.
+
 ## Stored ABIs
 
 `StoredAbiProvider` keeps the ABI history of the accounts a consumer
